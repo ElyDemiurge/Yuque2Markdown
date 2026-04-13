@@ -1,0 +1,8 @@
+# Yuque2Markdown
+# 本项目仅使用 Python 标准库，无需安装外部依赖
+#
+# 运行要求：
+# - Python >= 3.10 (使用了类型联合语法 str | None)
+#
+# 如需运行测试，可安装 pytest：
+# pip install pytest
