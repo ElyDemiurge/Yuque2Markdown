@@ -1,4 +1,4 @@
-"""Tests for Yuque client transport retry behavior."""
+"""语雀客户端传输重试测试。"""
 
 from __future__ import annotations
 

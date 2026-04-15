@@ -1,5 +1,5 @@
 class YuqueError(Exception):
-    """Base error for Yuque exporter."""
+    """语雀导出相关异常的基类。"""
 
 
 class YuqueApiError(YuqueError):
@@ -16,15 +16,15 @@ class YuqueRetryableError(YuqueError):
 
 
 class YuqueAuthError(YuqueApiError):
-    """Authentication failed."""
+    """鉴权失败。"""
 
 
 class YuquePermissionError(YuqueApiError):
-    """Permission denied."""
+    """权限不足。"""
 
 
 class YuqueNotFoundError(YuqueApiError):
-    """Entity not found."""
+    """目标资源不存在。"""
 
 
 class YuqueRateLimitError(YuqueApiError):
@@ -34,12 +34,12 @@ class YuqueRateLimitError(YuqueApiError):
 
 
 class YuqueValidationError(YuqueApiError):
-    """Invalid request or user input."""
+    """请求参数或用户输入不合法。"""
 
 
 class YuqueNetworkError(YuqueRetryableError):
-    """Network level failure."""
+    """网络层异常。"""
 
 
 class ExportError(YuqueError):
-    """Export level failure."""
+    """导出流程异常。"""

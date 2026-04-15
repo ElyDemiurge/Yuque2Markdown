@@ -1,4 +1,4 @@
-"""Regression tests for shared export/regenerate Markdown pipeline."""
+"""导出与根据 .lake 重新写出 Markdown 文件的共用流程测试。"""
 
 import sys
 import json

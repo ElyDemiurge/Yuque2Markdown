@@ -3,6 +3,7 @@ from __future__ import annotations
 import curses
 from dataclasses import dataclass, field
 
+from core_modules.console.menu import _display_width, _layout_frame, _render_framed_header
 from core_modules.export.models import TocNode
 
 
@@ -26,8 +27,8 @@ class _SelectorState:
     filter_text: str = ""
 
 
-HELP_LINE_1 = "方向键移动，空格切换，回车确认，/过滤，q返回"
-HELP_LINE_2 = "a当前全选，n当前清空，PgUp/PgDn翻页，Esc清空过滤"
+HELP_LINE_1 = "↑↓ 移动 | ←→ 展开/折叠 | Space 切换 | Enter 确认 | / 过滤 | q 返回"
+HELP_LINE_2 = "a 全选可见文档 | n 清空选择 | PgUp/PgDn 翻页 | Esc 清空过滤"
 
 
 def select_doc_ids(nodes: list[TocNode], initial_selected: set[int] | None = None, summary_lines: list[str] | None = None) -> set[int]:
@@ -120,24 +121,44 @@ def _flatten_visible(nodes: list[TocNode], expanded_keys: set[str], depth: int =
 def _render(stdscr, state: _SelectorState) -> None:
     stdscr.clear()
     height, width = stdscr.getmaxyx()
-    stdscr.addnstr(0, 0, HELP_LINE_1, width - 1, curses.A_BOLD)
-    stdscr.addnstr(1, 0, HELP_LINE_2, width - 1, curses.A_BOLD)
-    row = 2
+    help_lines = [HELP_LINE_1, HELP_LINE_2]
+    content_width, left, top, divider_row = _layout_frame(
+        height,
+        width,
+        help_lines,
+        len(state.items) + len(state.summary_lines) + 2,
+        None,
+        [],
+    )
+    divider_row = _render_framed_header(
+        stdscr,
+        title="选择文档",
+        help_text=help_lines,
+        width=width,
+        content_width=content_width,
+        top=top,
+        left=left,
+        height=height,
+    )
+    row = divider_row + 1
     if state.filter_text:
-        stdscr.addnstr(row, 0, f"过滤: {state.filter_text}", width - 1, curses.A_DIM)
+        stdscr.addnstr(row, left, _truncate(f"过滤: {state.filter_text}", content_width), content_width, curses.A_DIM)
         row += 1
     for line in state.summary_lines[:2]:
         if row >= height:
             break
-        stdscr.addnstr(row, 0, line, width - 1, curses.A_DIM)
+        stdscr.addnstr(row, left, _truncate(line, content_width), content_width, curses.A_DIM)
+        row += 1
+    if row < height:
+        stdscr.addnstr(row, left, "─" * max(0, content_width), content_width, curses.A_DIM)
         row += 1
 
     footer = _build_footer_line(state)
     content_height = max(1, height - row - 2)
     total = len(state.items)
     if total == 0:
-        stdscr.addnstr(row, 0, "当前过滤条件下没有匹配的文档，按 Esc 清空过滤", width - 1, curses.A_DIM)
-        stdscr.addnstr(height - 1, 0, _truncate(footer, width - 1), width - 1, curses.A_DIM)
+        stdscr.addnstr(row, left, _truncate("当前过滤条件下没有匹配的文档，按 Esc 清空过滤", content_width), content_width, curses.A_DIM)
+        stdscr.addnstr(height - 1, left, _truncate(footer, content_width), content_width, curses.A_DIM)
         return
 
     if state.index < state.top:
@@ -152,18 +173,30 @@ def _render(stdscr, state: _SelectorState) -> None:
         expand_marker = _expand_marker(item)
         prefix = "  " * item.depth
         suffix = _suffix_for_node(item.node)
-        label = _truncate(f"{marker} {expand_marker} {prefix}{item.node.title}{suffix}", width - 1)
+        label = _truncate(f"{marker} {expand_marker} {prefix}{item.node.title}{suffix}", content_width)
         attrs = curses.A_REVERSE if state.top + current_row - row == state.index else 0
-        stdscr.addnstr(current_row, 0, label, width - 1, attrs)
-    stdscr.addnstr(height - 1, 0, _truncate(footer, width - 1), width - 1, curses.A_DIM)
+        stdscr.addnstr(current_row, left, label, content_width, attrs)
+    if height - 2 >= row:
+        stdscr.addnstr(height - 2, left, "─" * max(0, content_width), content_width, curses.A_DIM)
+    stdscr.addnstr(height - 1, left, _truncate(footer, content_width), content_width, curses.A_DIM)
 
 
 def _truncate(text: str, max_len: int) -> str:
     if max_len <= 0:
         return ""
-    if len(text) <= max_len:
+    if _display_width(text) <= max_len:
         return text
-    return text[:max_len - 1] + "…"
+    if max_len == 1:
+        return "…"
+    result: list[str] = []
+    current_width = 0
+    for char in text:
+        char_width = _display_width(char)
+        if current_width + char_width > max_len - 1:
+            break
+        result.append(char)
+        current_width += char_width
+    return "".join(result) + "…"
 
 
 def _node_key(node: TocNode) -> str:
@@ -309,9 +342,17 @@ def _prompt_filter(stdscr, state: _SelectorState) -> None:
     while True:
         _render(stdscr, state)
         height, width = stdscr.getmaxyx()
+        content_width, left, _top, _divider_row = _layout_frame(
+            height,
+            width,
+            [HELP_LINE_1, HELP_LINE_2],
+            len(state.items) + len(state.summary_lines) + 2,
+            None,
+            [],
+        )
         prompt = f"过滤: {''.join(chars)}"
-        stdscr.addnstr(height - 1, 0, prompt, width - 1, curses.A_DIM)
-        stdscr.move(height - 1, min(len("过滤: ") + cursor, max(0, width - 2)))
+        stdscr.addnstr(height - 1, left, _truncate(prompt, content_width), content_width, curses.A_DIM)
+        stdscr.move(height - 1, min(left + len("过滤: ") + cursor, max(left, left + content_width - 1)))
         key = stdscr.get_wch()
         if key in ("\n", "\r"):
             state.filter_text = "".join(chars).strip()

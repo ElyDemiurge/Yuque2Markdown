@@ -37,7 +37,7 @@ def build_doc_markdown_result(
     fetch_binary=None,
     doc_slug_map: dict[str, str] | None = None,
 ):
-    """构建单篇文档最终 Markdown 结果，供导出与重生成复用。"""
+    """构建单篇文档最终 Markdown 结果，供导出与根据 .lake 重新写出 Markdown 文件共用。"""
     if render_result is None:
         if doc_data is None:
             raise ValueError("doc_data 和 render_result 不能同时为空")
@@ -96,6 +96,7 @@ class Exporter:
         queue = self._collect_doc_titles(toc_tree, checkpoint, options)
         total_docs = len(queue)
         progress = ProgressSnapshot(
+            export_started_monotonic=overall_start,
             total_docs=total_docs,
             waiting_docs=total_docs,
             latest_event=f"开始导出知识库 {repo.name or repo.book_slug}",
@@ -150,6 +151,7 @@ class Exporter:
             progress,
             current_stage="已完成",
             current_doc_title="",
+            current_doc_started_monotonic=0.0,
             latest_event=f"导出完成，成功 {result.exported_docs} 篇，跳过 {result.skipped_docs} 篇，失败 {result.failed_docs} 篇",
         )
         return result
@@ -319,6 +321,7 @@ class Exporter:
         self._emit_progress(
             progress,
             current_doc_elapsed_ms=0,
+            current_doc_started_monotonic=doc_start,
             current_doc_warnings=0,
             current_doc_resources=0,
             current_doc_downloaded=0,
@@ -342,6 +345,7 @@ class Exporter:
         self._emit_progress(
             progress,
             current_doc_title=node.title,
+            current_doc_started_monotonic=doc_start,
             current_stage="渲染 Markdown",
             active_tasks=[f"渲染 Markdown: {node.title}", f"写入目录: {output_paths.markdown_path.parent.name}"],
             latest_event=f"已获取文档详情: {node.title}",
@@ -383,10 +387,11 @@ class Exporter:
         # 如果启用离线化，先做本地化再写盘；否则直接写原始 Markdown
         final_result = render_result
         if options.offline_assets:
-            # 导出与重生成共用同一条 Markdown 本地化链路，避免规则分叉。
+            # 导出与根据 .lake 重新写出 Markdown 文件使用同一套本地化处理代码，避免两处逻辑不一致。
             self._emit_progress(
                 progress,
                 current_doc_title=node.title,
+                current_doc_started_monotonic=doc_start,
                 current_stage="离线化图片和附件",
                 active_tasks=[f"处理图片和附件: {node.title}", f"重写内部链接: {node.title}"],
                 latest_event=f"正在离线化 {node.title} 的资源",
@@ -479,9 +484,11 @@ class Exporter:
             waiting_preview=waiting_preview,
             recent_completed=recent_completed,
             current_doc_title=node.title,
+            current_doc_started_monotonic=doc_start,
             current_stage="文档完成",
             active_tasks=[f"完成: {node.title}"],
             latest_event=f"已完成 {node.title}",
+            current_doc_elapsed_ms=int((time.monotonic() - doc_start) * 1000),
         )
         log.doc_completed(node.title, state.warning_count)
         if hasattr(self.client, "set_debug_logger"):

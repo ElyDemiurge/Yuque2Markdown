@@ -1,4 +1,4 @@
-"""Tests for resource localizer."""
+"""资源本地化测试。"""
 import sys
 sys.path.insert(0, ".")
 

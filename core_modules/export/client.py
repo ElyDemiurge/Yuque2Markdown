@@ -20,9 +20,11 @@ from core_modules.export.errors import (
     YuqueRateLimitError,
     YuqueValidationError,
 )
+from core_modules.version import APP_VERSION
 
 BASE_URL = "https://www.yuque.com/api/v2"
 DEFAULT_TIMEOUT = 10
+USER_AGENT = f"Yuque2Markdown/{APP_VERSION.lstrip('v')}"
 RETRYABLE_TRANSPORT_ERRORS = (
     urllib.error.URLError,
     http.client.HTTPException,
@@ -108,7 +110,7 @@ class YuqueClient:
             request = urllib.request.Request(
                 url=url,
                 method="GET",
-                headers={"User-Agent": "Yuque2Markdown/0.1"},
+                headers={"User-Agent": USER_AGENT},
             )
             with opener.open(request, timeout=self.timeout) as response:
                 status = response.status if hasattr(response, 'status') else 200
@@ -124,7 +126,7 @@ class YuqueClient:
             request = urllib.request.Request(
                 url=self.proxy_test_url,
                 method="GET",
-                headers={"User-Agent": "Yuque2Markdown/0.1"},
+                headers={"User-Agent": USER_AGENT},
             )
             opener = urllib.request.build_opener()
             with opener.open(request, timeout=self.timeout) as response:
@@ -154,7 +156,7 @@ class YuqueClient:
             headers={
                 "X-Auth-Token": self.token,
                 "Accept": "application/json",
-                "User-Agent": "Yuque2Markdown/0.1",
+                "User-Agent": USER_AGENT,
             },
         )
 
@@ -193,7 +195,7 @@ class YuqueClient:
             method="GET",
             headers={
                 "X-Auth-Token": self.token,
-                "User-Agent": "Yuque2Markdown/0.1",
+                "User-Agent": USER_AGENT,
             },
         )
         for attempt in range(self.max_retries):
@@ -233,7 +235,7 @@ class YuqueClient:
         raise YuqueNetworkError("资源下载重试失败")
 
     def _retry_transport_error(self, attempt: int) -> bool:
-        """对代理/连接层瞬时异常执行统一重试，并重建 opener 避免复用坏连接。"""
+        """对代理或连接层瞬时异常执行统一重试，并重新创建 opener，避免复用已失效的连接对象。"""
         if attempt >= self.max_retries - 1:
             return False
         self._opener = self._build_opener()

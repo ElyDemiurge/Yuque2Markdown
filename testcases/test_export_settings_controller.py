@@ -1,4 +1,4 @@
-"""Tests for export settings controller attachment tree."""
+"""导出设置控制器中的附件树测试。"""
 import sys
 sys.path.insert(0, ".")
 
@@ -26,7 +26,7 @@ def test_attachment_section_contains_tree_structure():
     custom_item = next(item for item in items if item.key == "attachment_custom_suffixes")
     assert "无论是否启用，均默认下载 markdown 的图片资源" in all_item.title
     assert all_item.item_type == "readonly"
-    assert all_item.value == "暂不可用"
+    assert all_item.value == "当前不可用"
     assert all_item.indent == 0
     assert group_item.indent == 1
     assert row_item.indent == 2
@@ -81,5 +81,5 @@ def test_all_resources_status_reflects_wildcard():
     all_item = next(item for item in items if item.key == "attachment_suffixes_all")
 
     assert all_item.item_type == "readonly"
-    assert all_item.value == "暂不可用"
+    assert all_item.value == "当前不可用"
     assert "attachment_group__archives" in [item.key for item in items]

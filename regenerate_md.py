@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""重新生成已导出文档的 Markdown，并按配置补齐本地资源。"""
+"""根据已导出的 .lake 文件重新写出 Markdown 文件，并按配置补齐本地资源。"""
 
 from __future__ import annotations
 
@@ -88,12 +88,12 @@ def regenerate_all() -> int:
 
     entries = _collect_doc_entries(output_root)
     if not entries:
-        logger.warning(f"未在 {output_root} 找到可重建的 .lake 文件")
+        logger.warning(f"未在 {output_root} 找到可用于重新写出 Markdown 文件的 .lake 文件")
         return 1
     doc_slug_map = _build_doc_slug_map(entries)
 
     logger.info(
-        "开始重建 Markdown | 版本: %s | 文档数: %s | 输出目录: %s | 附件策略: %s | 转换源: .lake",
+        "开始根据 .lake 重新写出 Markdown 文件 | 版本: %s | 文档数: %s | 输出目录: %s | 附件结果: %s | 输入来源: .lake",
         APP_VERSION,
         len(entries),
         output_root,
@@ -117,7 +117,7 @@ def regenerate_all() -> int:
             title = doc_data["title"]
 
             # 先复用本地 assets 重写链接；本地缺失且有 Token 时再补下载图片。
-            # 语雀附件链接当前仍保持远程地址，不在重生成阶段下载。
+            # 语雀附件链接当前仍保持远程地址，不在重新写出 Markdown 文件这一步下载。
             result = build_doc_markdown_result(
                 doc_data,
                 markdown_path=md_file,
@@ -140,9 +140,9 @@ def regenerate_all() -> int:
                 logger.info("[%s/%s] %s | 转换成功", index, len(entries), title)
         except Exception as exc:  # noqa: BLE001
             failed += 1
-            logger.error("[%s/%s] 重建失败: %s | %s", index, len(entries), md_file.stem, exc)
+            logger.error("[%s/%s] 根据 .lake 重新写出 Markdown 文件失败: %s | %s", index, len(entries), md_file.stem, exc)
 
-    logger.info("重建完成 | 成功: %s | 失败: %s | 总警告: %s", converted, failed, total_warnings)
+    logger.info("根据 .lake 重新写出 Markdown 文件完成 | 成功: %s | 失败: %s | 总警告: %s", converted, failed, total_warnings)
     return 0 if failed == 0 else 1
 
 

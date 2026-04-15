@@ -1,4 +1,4 @@
-"""Session state helpers for Yuque2Markdown console."""
+"""控制台会话状态辅助函数。"""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from core_modules.config.models import SessionState
 
 
 def remember_menu_index(session: SessionState, menu_key: str, items: list, action: str) -> None:
-    """Remember selected index for a menu action."""
+    """记住菜单当前选中的索引。"""
     for index, item in enumerate(items):
         if item.key == action:
             session.menu_index_map[menu_key] = index
@@ -14,7 +14,7 @@ def remember_menu_index(session: SessionState, menu_key: str, items: list, actio
 
 
 def build_selected_docs_text(session: SessionState) -> str:
-    """Build text describing selected docs."""
+    """生成文档选择范围的展示文案。"""
     if session.selected_doc_ids:
         return f"已选 {len(session.selected_doc_ids)} 篇"
     if session.selected_doc_count:
@@ -33,21 +33,21 @@ def count_docs(nodes) -> int:
 
 
 def reset_connection_related_state(session: SessionState) -> None:
-    """Reset connection-dependent runtime state."""
+    """重置依赖连接状态的运行时字段。"""
     session.connection_ok = False
     session.current_user_label = "未检查"
     session.network_test_message = ""
 
 
 def mark_token_changed(session: SessionState, has_token: bool) -> None:
-    """Update session state after token changes."""
+    """Token 变更后，同步刷新会话状态。"""
     reset_connection_related_state(session)
     session.last_error_text = ""
     session.token_status_message = "已重新设置 Token，请手动刷新" if has_token else "Token 已清空"
 
 
 def mark_network_config_changed(session: SessionState) -> None:
-    """Update session state after network config changes."""
+    """网络配置变更后，同步刷新会话状态。"""
     session.network_test_message = ""
     session.last_error_text = ""
     session.token_status_message = "网络配置已修改，请重新测试"

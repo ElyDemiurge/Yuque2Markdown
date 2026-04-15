@@ -1,4 +1,4 @@
-"""Tests for progress module."""
+"""进度界面测试。"""
 import sys
 sys.path.insert(0, ".")
 
@@ -51,6 +51,18 @@ def test_progress_ui_finish():
     assert ui._finished is True
 
 
+def test_progress_ui_finish_keeps_completion_lines_in_output():
+    stream = DummyStream()
+    ui = ExportProgressUI(stream=stream)
+    ui.completion_lines = ["[导出结果]", "成功: 2 | 失败: 0"]
+    snapshot = ProgressSnapshot(total_docs=2, processed_docs=2, current_stage="已完成")
+    ui.finish(snapshot)
+    content = stream.getvalue()
+    assert "导出结果" in content
+    assert "成功: 2 | 失败: 0" in content
+    assert "返回" in content
+
+
 def test_progress_ui_warning_history():
     stream = DummyStream()
     ui = ExportProgressUI(stream=stream)
@@ -98,3 +110,31 @@ def test_stage_color():
     assert ui._stage_color("已完成") == ui.GREEN
     assert ui._stage_color("导出失败") == ui.RED
     assert ui._stage_color("限流等待") == ui.YELLOW
+
+
+def test_progress_ui_displays_live_current_doc_elapsed(monkeypatch):
+    stream = DummyStream()
+    ui = ExportProgressUI(stream=stream)
+    monkeypatch.setattr("core_modules.export.progress.time.monotonic", lambda: 15.0)
+    snapshot = ProgressSnapshot(
+        current_doc_title="Doc 1",
+        current_doc_started_monotonic=12.2,
+        current_doc_resources=3,
+    )
+    parts = ui._collect_doc_stat_parts(snapshot)
+    assert parts[0] == "耗时 2.8s"
+
+
+def test_progress_ui_displays_total_export_elapsed(monkeypatch):
+    stream = DummyStream()
+    ui = ExportProgressUI(stream=stream)
+    monkeypatch.setattr("core_modules.export.progress.time.monotonic", lambda: 21.5)
+    snapshot = ProgressSnapshot(
+        export_started_monotonic=10.0,
+        completed_docs=2,
+        skipped_docs=1,
+        failed_docs=0,
+        waiting_docs=3,
+        warning_count=4,
+    )
+    assert "总耗时 11.5s" in ui._plain_stats_line(snapshot)

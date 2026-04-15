@@ -3,6 +3,7 @@ from __future__ import annotations
 import curses
 import os
 import threading
+import time
 import unicodedata
 from dataclasses import replace
 from io import StringIO
@@ -76,6 +77,7 @@ class ExportProgressUI:
         self._finished = False
         self.use_color = self._supports_color()
         self.latest_snapshot = ProgressSnapshot()
+        self.completion_lines: list[str] = []
         self.history_scroll = 0
         self._last_warning: str | None = None
         self._last_error: str | None = None
@@ -96,10 +98,19 @@ class ExportProgressUI:
             self.stream.write("\n")
             self.stream.flush()
 
-    def run(self, worker: Callable[[], T], *, on_interrupt: Callable[[], bool] | None = None) -> T:
+    def run(
+        self,
+        worker: Callable[[], T],
+        *,
+        on_interrupt: Callable[[], bool] | None = None,
+        on_complete: Callable[[T], list[str]] | None = None,
+    ) -> T:
         """在独立线程中执行导出任务，并用 curses 展示可交互进度界面。"""
         if not self._supports_interactive_curses():
-            return worker()
+            value = worker()
+            if on_complete is not None:
+                self.completion_lines = list(on_complete(value))
+            return value
 
         result: dict[str, object] = {"value": None, "error": None}
 
@@ -114,7 +125,7 @@ class ExportProgressUI:
 
         while True:
             try:
-                curses.wrapper(lambda stdscr: self._run_curses(stdscr, thread))
+                curses.wrapper(lambda stdscr: self._run_curses(stdscr, thread, result, on_complete))
                 break
             except KeyboardInterrupt:
                 if on_interrupt is not None and not on_interrupt():
@@ -141,18 +152,40 @@ class ExportProgressUI:
             self.history = self.history[-self.history_limit :]
         self._clamp_history_scroll()
 
-    def _run_curses(self, stdscr, thread: threading.Thread) -> None:
+    def _run_curses(self, stdscr, thread: threading.Thread, result: dict[str, object], on_complete) -> None:
         curses.curs_set(0)
         self._init_curses_colors(curses)
         stdscr.timeout(150)
+        completion_built = False
         while True:
             snapshot = self.latest_snapshot
             if not thread.is_alive() and not self._finished:
                 self._finished = True
                 snapshot = replace(snapshot, current_stage="已完成")
                 self.latest_snapshot = snapshot
+            if self._finished and not completion_built and result["error"] is None and result["value"] is not None and on_complete is not None:
+                self.completion_lines = list(on_complete(result["value"]))
+                completion_built = True
             self._render_curses(stdscr, snapshot)
             if not thread.is_alive():
+                stdscr.timeout(-1)
+                key = stdscr.getch()
+                if key == curses.KEY_UP:
+                    self.history_scroll = max(0, self.history_scroll - 1)
+                    self._clamp_history_scroll()
+                    continue
+                if key == curses.KEY_DOWN:
+                    self.history_scroll += 1
+                    self._clamp_history_scroll()
+                    continue
+                if key == curses.KEY_PPAGE:
+                    self.history_scroll = max(0, self.history_scroll - 5)
+                    self._clamp_history_scroll()
+                    continue
+                if key == curses.KEY_NPAGE:
+                    self.history_scroll += 5
+                    self._clamp_history_scroll()
+                    continue
                 break
             key = stdscr.getch()
             if key == -1:
@@ -194,8 +227,17 @@ class ExportProgressUI:
                 (left, sep),
                 (left, self._section_header("统计")),
                 (left, self._build_stats_line(snapshot)),
+            ]
+        )
+        if self._finished and self.completion_lines:
+            lines.append((left, sep))
+            lines.append((left, self._section_header("导出结果")))
+            for line in self.completion_lines:
+                lines.append((left, _fit(line, content_width)))
+        lines.extend(
+            [
                 (left, sep),
-                (left, self._section_header("警告")),
+                (left, self._section_header("警告/异常")),
             ]
         )
         for line in self._format_history_ansi(content_width):
@@ -205,6 +247,11 @@ class ExportProgressUI:
             lines.append((left, sep))
             lines.append((left, self._section_value("日志", log_path, self.CYAN, content_width)))
         lines.append((left, sep))
+        if self._finished:
+            button_text = self._build_return_button()
+            button_x = max(0, (width - _display_width(_strip_ansi(button_text))) // 2)
+            lines.append((button_x, button_text))
+            lines.append((left, sep))
 
         total_lines = len(lines)
         if self.last_rendered_lines:
@@ -226,7 +273,11 @@ class ExportProgressUI:
     def _render_curses(self, stdscr, snapshot: ProgressSnapshot) -> None:
         stdscr.clear()
         height, width = stdscr.getmaxyx()
-        help_lines = ["Ctrl+C 退出确认 | ↑↓ 滚动警告 | PgUp/PgDn 快速滚动"]
+        help_lines = (
+            ["任意键返回 | ↑↓ 滚动警告 | PgUp/PgDn 快速滚动"]
+            if self._finished
+            else ["Ctrl+C 退出确认 | ↑↓ 滚动警告 | PgUp/PgDn 快速滚动"]
+        )
         content_width = min(width - 1, max(60, min(128, width - 4)))
         left = max(0, (width - content_width) // 2)
         top_margin = max(1, height // 8)
@@ -264,38 +315,47 @@ class ExportProgressUI:
         if rate_line:
             fixed_lines.append(("── 限流 ──", self._curses_attr(curses, "section")))
             fixed_lines.append((rate_line, self._curses_attr(curses, "rate_limit")))
+        if self._finished and self.completion_lines:
+            fixed_lines.extend(
+                [
+                    ("─" * content_width, self._curses_attr(curses, "divider")),
+                    ("── 导出结果 ──", self._curses_attr(curses, "section")),
+                ]
+            )
+            fixed_lines.extend((line, self._curses_attr(curses, "active")) for line in self.completion_lines)
+        else:
+            fixed_lines.extend(
+                [
+                    ("─" * content_width, self._curses_attr(curses, "divider")),
+                    ("── 正在进行 ──", self._curses_attr(curses, "section")),
+                ]
+            )
+            fixed_lines.extend((line, self._curses_attr(curses, "active")) for line in self._plain_list(snapshot.active_tasks, "无活动任务", limit=3))
+            fixed_lines.extend(
+                [
+                    ("─" * content_width, self._curses_attr(curses, "divider")),
+                    ("── 最近完成 ──", self._curses_attr(curses, "section")),
+                ]
+            )
+            fixed_lines.extend((line, self._curses_attr(curses, "completed")) for line in self._plain_list(snapshot.recent_completed, "暂无完成记录", limit=3))
+            fixed_lines.extend(
+                [
+                    ("─" * content_width, self._curses_attr(curses, "divider")),
+                    ("── 最近失败 ──", self._curses_attr(curses, "section")),
+                ]
+            )
+            fixed_lines.extend((line, self._curses_attr(curses, "failed")) for line in self._plain_list(snapshot.recent_failed, "暂无失败记录", limit=3))
+            fixed_lines.extend(
+                [
+                    ("─" * content_width, self._curses_attr(curses, "divider")),
+                    ("── 等待队列 ──", self._curses_attr(curses, "section")),
+                ]
+            )
+            fixed_lines.extend((line, self._curses_attr(curses, "waiting")) for line in self._plain_list(snapshot.waiting_preview, "队列为空", limit=3))
         fixed_lines.extend(
             [
                 ("─" * content_width, self._curses_attr(curses, "divider")),
-                ("── 正在进行 ──", self._curses_attr(curses, "section")),
-            ]
-        )
-        fixed_lines.extend((line, self._curses_attr(curses, "active")) for line in self._plain_list(snapshot.active_tasks, "无活动任务", limit=3))
-        fixed_lines.extend(
-            [
-                ("─" * content_width, self._curses_attr(curses, "divider")),
-                ("── 最近完成 ──", self._curses_attr(curses, "section")),
-            ]
-        )
-        fixed_lines.extend((line, self._curses_attr(curses, "completed")) for line in self._plain_list(snapshot.recent_completed, "暂无完成记录", limit=3))
-        fixed_lines.extend(
-            [
-                ("─" * content_width, self._curses_attr(curses, "divider")),
-                ("── 最近失败 ──", self._curses_attr(curses, "section")),
-            ]
-        )
-        fixed_lines.extend((line, self._curses_attr(curses, "failed")) for line in self._plain_list(snapshot.recent_failed, "暂无失败记录", limit=3))
-        fixed_lines.extend(
-            [
-                ("─" * content_width, self._curses_attr(curses, "divider")),
-                ("── 等待队列 ──", self._curses_attr(curses, "section")),
-            ]
-        )
-        fixed_lines.extend((line, self._curses_attr(curses, "waiting")) for line in self._plain_list(snapshot.waiting_preview, "队列为空", limit=3))
-        fixed_lines.extend(
-            [
-                ("─" * content_width, self._curses_attr(curses, "divider")),
-                ("── 警告 ──", self._curses_attr(curses, "section")),
+                ("── 警告/异常 ──", self._curses_attr(curses, "section")),
             ]
         )
 
@@ -329,6 +389,12 @@ class ExportProgressUI:
             if row >= height:
                 break
             stdscr.addnstr(row, left, _fit(text, content_width), content_width, attr)
+            row += 1
+
+        if self._finished and row < height:
+            button_text = self._build_return_button(curses)
+            button_x = max(0, (width - _display_width(" 返回 ")) // 2)
+            stdscr.addnstr(row, button_x, " 返回 ", min(content_width, width - button_x), button_text)
             row += 1
 
         stdscr.refresh()
@@ -370,8 +436,9 @@ class ExportProgressUI:
         if not snapshot.current_doc_title:
             return []
         parts: list[str] = []
-        if snapshot.current_doc_elapsed_ms > 0:
-            parts.append(f"耗时 {snapshot.current_doc_elapsed_ms / 1000:.1f}s")
+        current_doc_elapsed_ms = self._current_doc_elapsed_ms(snapshot)
+        if current_doc_elapsed_ms > 0:
+            parts.append(f"耗时 {current_doc_elapsed_ms / 1000:.1f}s")
         if snapshot.current_doc_warnings > 0:
             parts.append(self._colorize(f"[!] {snapshot.current_doc_warnings} 警告", self.YELLOW))
         if snapshot.current_doc_resources > 0:
@@ -389,13 +456,30 @@ class ExportProgressUI:
             ("警告", snapshot.warning_count, self.YELLOW),
         ]
         parts = [self._colorize(f"{label} {count}", color if count > 0 else self._dim_gray()) for label, count, color in items]
+        export_elapsed_ms = self._export_elapsed_ms(snapshot)
+        if export_elapsed_ms > 0:
+            parts.append(self._colorize(f"总耗时 {export_elapsed_ms / 1000:.1f}s", self.CYAN))
         return "  " + " │ ".join(parts)
 
     def _plain_stats_line(self, snapshot: ProgressSnapshot) -> str:
-        return (
+        line = (
             f"  完成 {snapshot.completed_docs} | 跳过 {snapshot.skipped_docs} | "
             f"失败 {snapshot.failed_docs} | 等待 {snapshot.waiting_docs} | 警告 {snapshot.warning_count}"
         )
+        export_elapsed_ms = self._export_elapsed_ms(snapshot)
+        if export_elapsed_ms > 0:
+            line += f" | 总耗时 {export_elapsed_ms / 1000:.1f}s"
+        return line
+
+    def _current_doc_elapsed_ms(self, snapshot: ProgressSnapshot) -> int:
+        if snapshot.current_doc_started_monotonic > 0 and snapshot.current_doc_title:
+            return max(0, int((time.monotonic() - snapshot.current_doc_started_monotonic) * 1000))
+        return max(0, snapshot.current_doc_elapsed_ms)
+
+    def _export_elapsed_ms(self, snapshot: ProgressSnapshot) -> int:
+        if snapshot.export_started_monotonic > 0:
+            return max(0, int((time.monotonic() - snapshot.export_started_monotonic) * 1000))
+        return 0
 
     def _plain_rate_limit_line(self, snapshot: ProgressSnapshot) -> str:
         if snapshot.rate_limit_limit is None and snapshot.rate_limit_remaining is None and not snapshot.rate_limit_reset:
@@ -415,7 +499,7 @@ class ExportProgressUI:
 
     def _format_history_ansi(self, width: int) -> list[str]:
         if not self.history:
-            return ["  " + self._colorize("─ 暂无警告或异常", self._dim_gray())]
+            return ["  " + self._colorize("暂无", self._dim_gray())]
         lines: list[str] = []
         for level, message in self.history[-6:]:
             color = self.YELLOW if level == "WARN" else self.RED
@@ -425,7 +509,7 @@ class ExportProgressUI:
 
     def _plain_history_lines(self, width: int) -> list[str]:
         if not self.history:
-            return ["  - 暂无警告或异常"]
+            return ["  暂无"]
         lines: list[str] = []
         for level, message in self.history:
             prefix = "[!]" if level == "WARN" else "[x]"
@@ -434,7 +518,7 @@ class ExportProgressUI:
 
     def _slice_history_lines(self, lines: list[str], visible_rows: int) -> tuple[list[str], str]:
         if not lines:
-            return ["  - 暂无警告或异常"], "警告 0/0"
+            return ["  暂无"], "警告 0/0"
         max_scroll = max(0, len(lines) - visible_rows)
         self.history_scroll = min(self.history_scroll, max_scroll)
         start = self.history_scroll
@@ -449,6 +533,11 @@ class ExportProgressUI:
         if log_path:
             lines.append((f"日志: {log_path}", self._footer_attr("log")))
         return lines
+
+    def _build_return_button(self, curses_module=None):
+        if curses_module is not None:
+            return curses_module.A_REVERSE | curses_module.A_BOLD
+        return self._colorize(" 返回 ", self.BOLD, self.CYAN)
 
     def _clamp_history_scroll(self) -> None:
         max_scroll = max(0, len(self.history) - 1)

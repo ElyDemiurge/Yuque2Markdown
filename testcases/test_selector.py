@@ -5,6 +5,7 @@ from core_modules.selector import (
     _collect_expandable_keys,
     _flatten_visible,
     _node_key,
+    _truncate,
     select_doc_ids,
 )
 
@@ -62,3 +63,10 @@ def test_selector_footer_line_includes_counts() -> None:
     footer = _build_footer_line(state)
     assert "已选 1 篇" in footer
     assert "过滤: a" in footer
+
+
+def test_selector_truncate_respects_display_width_for_long_chinese_title() -> None:
+    text = "PWN入门（3-18-1）-Tcache Attack中的tcache_perthread_struct（基础、例题）（附：向__malloc_hook中写入one_gadget无法getshell的问题及解决方案）"
+    truncated = _truncate(text, 40)
+    assert truncated.endswith("…")
+    assert len(truncated) < len(text)

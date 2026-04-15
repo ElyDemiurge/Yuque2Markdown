@@ -28,7 +28,7 @@ def localize_markdown_assets(
     markdown = render_result.markdown
     warnings = list(render_result.warnings)
     rewritten = 0
-    # `attachment_suffixes` 相关逻辑继续保留，等语雀官方补齐附件接口后可直接恢复使用。
+    # `attachment_suffixes` 相关逻辑继续保留，等语雀官方补齐附件能力后可直接恢复使用。
     normalized_suffixes = normalize_attachment_suffixes(attachment_suffixes)
     attachment_resources = [resource for resource in render_result.resources if resource.kind == "attachment"]
 
@@ -182,7 +182,7 @@ def _should_download_resource(resource: ResourceRef, attachment_suffixes: list[s
         return True
     if resource.kind != "attachment":
         return False
-    # 当前阶段仅本地化图片，附件仍保留语雀原始链接。
+    # 当前仅本地化图片，语雀附件仍保留原始链接。
     # 参数继续保留，避免未来恢复附件下载时再改外部调用链。
     return False
 

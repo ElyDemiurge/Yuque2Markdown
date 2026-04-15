@@ -9,6 +9,12 @@ from core_modules.export.cli import fetch_repo_toc
 from core_modules.selector import select_doc_ids
 
 
+def _reset_doc_selection(session: SessionState, total_docs: int = 0) -> None:
+    """切换知识库后清空旧的文档选择状态，避免沿用上一库的选择结果。"""
+    session.selected_doc_ids = None
+    session.selected_doc_count = total_docs
+
+
 def handle_repo_input_inline(
     config: AppConfig,
     session: SessionState,
@@ -16,7 +22,7 @@ def handle_repo_input_inline(
     *,
     build_client_from_config,
 ) -> bool:
-    """Validate and process repository input inline."""
+    """校验并处理用户手动输入的知识库。"""
     token = (config.token or "").strip()
     if not session.connection_ok:
         session.token_status_message = "Token 无效，无法校验知识库"
@@ -29,22 +35,29 @@ def handle_repo_input_inline(
         session.status_message = f"知识库校验失败: {exc}"
         show_message("知识库校验失败", [str(exc)])
         return False
+    previous_repo = session.repo_input
     session.repo_input = f"{repo.group_login}/{repo.book_slug}"
     session.repo_display_name = repo.name or repo.book_slug
     session.repo_namespace = repo.namespace or f"{repo.group_login}/{repo.book_slug}"
     session.repo_url = repo.url or ""
-    session.selected_doc_count = count_docs(toc_tree)
+    if session.repo_input != previous_repo:
+        _reset_doc_selection(session, count_docs(toc_tree))
+    else:
+        session.selected_doc_count = count_docs(toc_tree)
     session.status_message = f"知识库校验通过: {session.repo_namespace}"
     session.dirty = True
     return True
 
 
 def handle_repo_selection(
+    config: AppConfig,
     session: SessionState,
     repos: list[dict],
     rate_limit_summary: str,
+    *,
+    build_client_from_config,
 ) -> bool:
-    """Handle repository selection from list."""
+    """处理“从列表选择知识库”动作。"""
     if not repos:
         session.status_message = "暂无可选知识库，请先刷新连接"
         show_message("暂无可选知识库", ["请先刷新连接状态，确认 token 有效且账号有可访问仓库。"])
@@ -68,10 +81,22 @@ def handle_repo_selection(
     namespace = repo.get("namespace")
     if not namespace:
         return False
+    previous_repo = session.repo_input
     session.repo_input = namespace
     session.repo_display_name = repo.get("name") or namespace.split("/")[-1]
     session.repo_namespace = namespace
     session.repo_url = f"https://www.yuque.com/{namespace}"
+    if session.repo_input != previous_repo:
+        total_docs = 0
+        token = (config.token or "").strip()
+        if session.connection_ok and token:
+            try:
+                client = build_client_from_config(config, token)
+                _, toc_tree = fetch_repo_toc(client, session.repo_input)
+                total_docs = count_docs(toc_tree)
+            except Exception:
+                total_docs = 0
+        _reset_doc_selection(session, total_docs)
     session.status_message = f"已选择知识库: {session.repo_display_name}"
     session.dirty = True
     return True
@@ -84,7 +109,7 @@ def handle_doc_selection(
     *,
     build_client_from_config,
 ) -> tuple[str, bool]:
-    """Handle document selection with TOC navigation."""
+    """进入目录树选择器并更新文档选择结果。"""
     token = (config.token or "").strip()
     if not session.connection_ok:
         session.token_status_message = "Token 无效，无法读取目录"

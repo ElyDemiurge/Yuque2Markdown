@@ -15,12 +15,12 @@ ATTACHMENT_SUFFIX_ROW_GROUPS = {
     "docs": [[".pdf", ".doc", ".docx", ".xls", ".xlsx"], [".ppt", ".pptx"]],
     "media": [[".mp3", ".mp4"]],
 }
-ATTACHMENT_DOWNLOAD_DISABLED_TEXT = "暂不可用"
+ATTACHMENT_DOWNLOAD_DISABLED_TEXT = "当前不可用"
 ATTACHMENT_ALL_TITLE = "选择下载所有资源（无论是否启用，均默认下载 markdown 的图片资源）"
 
 
 class ExportSettingsController:
-    """Controller for export settings menu operations."""
+    """管理“导出路径与资源”子菜单。"""
 
     def __init__(self, config: AppConfig, session: SessionState, *, status_lines_builder=None):
         self.config = config
@@ -30,7 +30,7 @@ class ExportSettingsController:
         self.attachment_row_selected_index: dict[str, int] = {}
 
     def run(self) -> bool:
-        """Run the export settings menu and handle user interactions."""
+        """运行“导出路径与资源”子菜单并处理交互。"""
         while True:
             items = self._build_menu_items()
             action = run_menu(
@@ -52,7 +52,7 @@ class ExportSettingsController:
                 self._handle_assets_dir(edited_value)
             elif key in {"resume", "strict", "offline_assets", "fail_on_asset_error"}:
                 self._handle_toggle(key)
-            # 附件下载 UI 当前为只读展示，这些分支保留以便后续恢复能力时直接复用。
+            # 附件下载 UI 当前只读展示；相关分支继续保留，便于后续恢复能力时直接复用。
             elif key == "attachment_suffixes_all":
                 self._toggle_attachment_all()
             elif key.startswith("attachment_group__"):
@@ -63,7 +63,7 @@ class ExportSettingsController:
                 self._toggle_attachment_suffix("." + key.removeprefix("attachment_suffix__"))
 
     def _build_menu_items(self) -> list[MenuItem]:
-        """Build menu items for export settings."""
+        """构造导出设置菜单项。"""
         items = [
             MenuItem("section_paths", "── 路径与资源 ──", item_type="section", focusable=False),
             MenuItem("output_dir", "输出目录", self.config.export_defaults.output_dir, input_style=True),
@@ -144,13 +144,13 @@ class ExportSettingsController:
         return items
 
     def _build_status_lines(self) -> list[str]:
-        """Build status lines for submenu."""
+        """构造子菜单状态栏文本。"""
         if self.status_lines_builder is not None:
             return self.status_lines_builder(self.config, self.session)
         return ["配置已保存" if not self.session.dirty else "有未保存的修改"]
 
     def _handle_output_dir(self, value: str) -> None:
-        """Handle output directory setting change."""
+        """处理输出目录修改。"""
         if value:
             self.config.export_defaults.output_dir = value
             self.session.status_message = "已更新输出目录"
@@ -158,7 +158,7 @@ class ExportSettingsController:
             self.changed = True
 
     def _handle_assets_dir(self, value: str) -> None:
-        """Handle assets directory setting change."""
+        """处理资源目录名修改。"""
         if value:
             self.config.export_defaults.assets_dir_name = value
             self.session.status_message = "已更新资源目录名"
@@ -166,9 +166,15 @@ class ExportSettingsController:
             self.changed = True
 
     def _handle_toggle(self, key: str) -> None:
-        """Handle boolean toggle setting change."""
+        """处理布尔开关项切换。"""
         toggle_config_value(self.config, key)
-        self.session.status_message = f"已更新: {key}"
+        label_map = {
+            "resume": "断点续导",
+            "strict": "严格模式",
+            "offline_assets": "离线资源",
+            "fail_on_asset_error": "资源下载失败时中止导出",
+        }
+        self.session.status_message = f"已更新{label_map.get(key, key)}"
         self.session.dirty = True
         self.changed = True
 
@@ -229,7 +235,7 @@ class ExportSettingsController:
         self._apply_attachment_suffixes(base_suffixes + custom_suffixes)
 
     def _remember_menu_index(self, items: list[MenuItem], key: str) -> None:
-        """Remember the menu index and inline cursor for the given action key."""
+        """记录当前菜单索引和行内光标位置。"""
         for index, item in enumerate(items):
             if item.key == key:
                 self.session.menu_index_map["export_settings"] = index
@@ -254,5 +260,5 @@ class ExportSettingsController:
         self.changed = True
 
     def _bool_text(self, value: bool) -> str:
-        """Convert boolean to Chinese text."""
+        """将布尔值转为界面文案。"""
         return "开启" if value else "关闭"

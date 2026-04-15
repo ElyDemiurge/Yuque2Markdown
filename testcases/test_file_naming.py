@@ -1,4 +1,4 @@
-"""Tests for file naming utilities."""
+"""文件命名工具测试。"""
 import sys
 sys.path.insert(0, ".")
 
@@ -19,7 +19,7 @@ def test_sanitize_removes_invalid_chars():
 
 
 def test_sanitize_path_traversal():
-    """Path traversal attempts should be neutralized to just the basename."""
+    """路径遍历输入应被收敛为安全文件名。"""
     assert sanitize_name("../../../etc/passwd") == "passwd"
     assert sanitize_name("foo/bar/../../../etc/passwd") == "passwd"
     assert sanitize_name("/etc/passwd") == "passwd"
@@ -117,7 +117,7 @@ def test_safe_join_multiple_parts(tmp_path):
 # ── combined usage tests ──────────────────────────────────────
 
 def test_sanitize_then_unique():
-    """sanitize_name output should work correctly with unique_name."""
+    """sanitize_name 的输出应能与 unique_name 正常配合。"""
     used: set[str] = set()
     raw = "My Doc<test>"
     safe = sanitize_name(raw)
@@ -127,7 +127,7 @@ def test_sanitize_then_unique():
 
 
 def test_path_traversal_protection_end_to_end():
-    """A real-world path traversal attack should be fully neutralized."""
+    """真实路径遍历输入也应被完全消解。"""
     attack = "../../../tmp/evil.sh"
     safe = sanitize_name(attack)
     # Should not contain path separators or dots

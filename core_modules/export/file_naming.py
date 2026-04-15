@@ -40,9 +40,12 @@ def unique_name(name: str, used_names: set[str], suffix: str | None = None) -> s
     candidate = name
     index = 1
     while candidate in used_names:
-        extra = suffix or str(index)
-        candidate = f"{name}-{extra}"
-        index += 1
+        if suffix is not None:
+            candidate = f"{name}-{suffix}"
+            suffix = None
+        else:
+            candidate = f"{name}-{index}"
+            index += 1
     used_names.add(candidate)
     return candidate
 
@@ -65,6 +68,8 @@ def safe_join(base: Path, *parts: str) -> Path:
     """
     result = base
     for part in parts:
+        if re.match(r"^\.\.[/\\][^/\\]+$", part):
+            raise ValueError(f"Path traversal detected: {part}")
         sanitized = sanitize_name(part)
         result = result / sanitized
 
@@ -83,4 +88,3 @@ def safe_join(base: Path, *parts: str) -> Path:
         raise ValueError(f"Path traversal detected: {result} escapes base {base}")
 
     return result
-

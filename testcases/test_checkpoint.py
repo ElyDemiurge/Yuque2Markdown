@@ -1,4 +1,4 @@
-"""Tests for checkpoint module."""
+"""断点文件测试。"""
 import sys
 sys.path.insert(0, ".")
 

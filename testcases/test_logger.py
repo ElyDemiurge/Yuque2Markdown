@@ -1,4 +1,4 @@
-"""Tests for logger module."""
+"""导出日志测试。"""
 import sys
 sys.path.insert(0, ".")
 
@@ -65,7 +65,7 @@ def test_logger_skip_and_fail(tmp_path):
 
 
 def test_logger_write_failure_tracked(tmp_path):
-    """When log write fails, error should be tracked, not silently ignored."""
+    """日志写入失败时，应记录 error，而不是静默忽略。"""
     # Use a path that's guaranteed to be unreadable as a directory
     log_path = tmp_path / "readonly_dir" / "test.log"
     log = ExportLogger(log_path)

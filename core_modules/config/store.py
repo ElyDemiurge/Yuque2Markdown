@@ -63,7 +63,7 @@ def load_config(base_dir: Path | None = None) -> AppConfig:
         ui_preferences=UiPreferences(**ui_preferences),
     )
 
-    # Validate loaded config and warn about issues
+    # 配置读入后先做一次校验，便于尽早发现旧字段或非法值。
     errors = validate_config(config)
     if errors:
         error_lines = format_validation_errors(errors)
@@ -75,7 +75,7 @@ def load_config(base_dir: Path | None = None) -> AppConfig:
 
 
 def validate_config_on_save(config: AppConfig) -> list[ValidationError]:
-    """Validate configuration before saving. Returns validation errors if any."""
+    """保存前执行配置校验，并返回全部校验错误。"""
     return validate_config(config)
 
 

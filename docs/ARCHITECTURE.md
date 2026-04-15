@@ -2,7 +2,7 @@
 
 ## 概览
 
-Yuque2Markdown 是一个将语雀知识库导出为本地 Markdown 文件的交互式终端工具。项目以“控制台交互 -> 导出编排 -> Lake 转换 -> 文件落盘”为主线，围绕以下几个目标组织代码：
+Yuque2Markdown 是一个将语雀知识库导出为本地 Markdown 的交互式终端工具。主线流程是“控制台交互 -> 导出编排 -> Lake 转换 -> 文件落盘”：
 
 - 在终端中完成配置、知识库选择和导出控制
 - 通过语雀 API 拉取知识库、目录和文档详情
@@ -34,13 +34,13 @@ core_modules.export.exporter
 - `yuque2markdown.py`
   程序主入口。负责 Python 版本和标准库模块检查、终端环境检查，并启动交互式控制台。
 - `regenerate_md.py`
-  维护脚本。用于遍历 `output/` 中已有的 `.lake` 与 `.yuque.json` 文件，重新生成对应 Markdown；会优先复用本地 `assets/`，并在具备 Token 时补下载缺失图片。
+  维护脚本。遍历 `output/` 中已有的 `.lake` 与 `.yuque.json` 文件，重新生成对应 Markdown；会优先复用本地 `assets/`，并在具备 Token 时补下缺失图片。
 - `pytest.ini`
   pytest 统一入口配置，约定测试目录为 `testcases/`。
 - `output/`
   导出产物目录，包含 Markdown、原始数据、资源、日志与断点文件。
 
-## 模块结构
+## 模块组成
 
 ### `core_modules/config/`
 
@@ -61,7 +61,7 @@ core_modules.export.exporter
 - `state/`：运行状态整理与状态栏展示辅助函数
 - `helpers.py`：控制台共享工具函数
 
-这里的职责分层是：
+模块分工如下：
 
 - `controllers/` 更偏菜单组织与交互流程
 - `handlers/` 更偏业务动作与状态更新
@@ -90,16 +90,16 @@ core_modules.export.exporter
 
 - `converter.py`：Lake -> Markdown
 - `resource_parser.py`：从 Markdown 中提取图片、附件、文档链接等资源引用
-- `localizer.py`：图片下载、本地路径生成、链接替换，以及语雀附件保留策略
+- `localizer.py`：图片下载、本地路径生成、链接替换，以及语雀附件保留方式
 - `models.py`：Lake 转换过程中的数据结构
 
-Lake 格式的详细规则、卡片类型和警告策略见 [语雀lake格式解析.md](语雀lake格式解析.md)。
+Lake 格式的详细规则、卡片类型和警告规则见 [语雀lake格式解析.md](语雀lake格式解析.md)。
 
 ### 其他模块
 
 - `selector.py`：文档树选择器，用于按目录结构选择需要导出的文档
 
-## 关键数据流
+## 主要执行顺序
 
 ### 1. 启动阶段
 
@@ -128,21 +128,19 @@ Lake 格式的详细规则、卡片类型和警告策略见 [语雀lake格式解
 - `export/writer.py` 写出 Markdown、原始 JSON、`.lake` 和资源文件
 - `checkpoint.py` 在导出过程中记录进度
 
-### 4. 批量重转阶段
+### 4. 根据 `.lake` 重新写出 Markdown 文件阶段
 
 - 用户执行 `python regenerate_md.py`
 - 脚本遍历 `output/` 中的 `.lake` 和 `.yuque.json`
 - 重新调用 `render_doc_markdown()` 生成 Markdown
 - 将结果覆盖写回对应 `.md`
-- 在 `regenerate.log` 中记录本次重转情况
+- 在 `regenerate.log` 中记录本次重新写出情况
 
 ## 关键状态对象
 
 ### `AppConfig`
 
-持久化配置，保存到 `yuque2markdown.config.json`。
-
-主要包含：
+持久化配置，保存到 `yuque2markdown.config.json`，主要包含：
 
 - Token
 - 默认导出配置
@@ -153,9 +151,7 @@ Lake 格式的详细规则、卡片类型和警告策略见 [语雀lake格式解
 
 ### `SessionState`
 
-运行时状态，仅在当前会话内生效。
-
-重点字段包括：
+运行时状态，仅在当前会话内生效。重点字段包括：
 
 - `token_status_message`：Token 与连接状态
 - `network_test_message`：网络测试状态
@@ -163,9 +159,9 @@ Lake 格式的详细规则、卡片类型和警告策略见 [语雀lake格式解
 - `connection_ok`：连接是否成功
 - `dirty`：配置是否存在未保存修改
 
-## 输出结构
+## 输出目录与文件
 
-导出后，`output/` 下通常会按知识库和目录树生成本地层级。单篇文档目录中常见文件包括：
+导出后，`output/` 下通常会按知识库和目录树生成本地层级。单篇文档目录常见文件包括：
 
 - `文档名.md`
 - `文档名.yuque.json`
@@ -175,14 +171,12 @@ Lake 格式的详细规则、卡片类型和警告策略见 [语雀lake格式解
 同时，导出过程还会生成：
 
 - `export.log`：导出过程日志
-- `regenerate.log`：重转日志
+- `regenerate.log`：重新写出 Markdown 文件的日志
 - checkpoint 文件：用于中断恢复
 
 ## 测试结构
 
-项目测试统一放在 `testcases/` 目录，并通过 `pytest.ini` 作为统一入口。
-
-当前测试大致分为：
+项目测试统一放在 `testcases/` 目录，并通过 `pytest.ini` 作为统一入口。当前大致分为：
 
 - 配置与校验：`test_config_store.py`、`test_config_validator.py`
 - 控制台与菜单：`test_console_app.py`、`test_console_menu.py`

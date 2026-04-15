@@ -6,7 +6,7 @@ from core_modules.console.menu import MenuItem, run_menu, show_message
 
 
 class AdvancedSettingsController:
-    """Controller for advanced network and proxy settings."""
+    """管理“网络与代理”子菜单。"""
 
     def __init__(self, config: AppConfig, session: SessionState, *, build_client_from_config, status_lines_builder=None):
         self.config = config
@@ -16,7 +16,7 @@ class AdvancedSettingsController:
         self.changed = False
 
     def run(self) -> bool:
-        """Run the advanced settings menu."""
+        """运行“网络与代理”子菜单。"""
         while True:
             items = self._build_menu_items()
             action = run_menu(
@@ -60,7 +60,7 @@ class AdvancedSettingsController:
                 self._handle_test_direct_connection()
 
     def _build_menu_items(self) -> list[MenuItem]:
-        """Build menu items for advanced settings."""
+        """构造“网络与代理”子菜单项。"""
         proxy = self.config.export_defaults.proxy
         items: list[MenuItem] = [
             MenuItem("section_proxy", "── 本地代理 ──", item_type="section", focusable=False),
@@ -85,20 +85,20 @@ class AdvancedSettingsController:
         return items
 
     def _build_status_lines(self) -> list[str]:
-        """Build status lines for submenu."""
+        """构造子菜单状态栏文本。"""
         if self.status_lines_builder is not None:
             return self.status_lines_builder(self.config, self.session)
         return ["配置已保存" if not self.session.dirty else "有未保存的修改"]
 
     def _remember_menu_index(self, items: list[MenuItem], key: str) -> None:
-        """Remember the menu index for the given action key."""
+        """记住当前菜单光标位置。"""
         for index, item in enumerate(items):
             if item.key == key:
                 self.session.menu_index_map["advanced_settings"] = index
                 return
 
     def _mark_network_config_changed(self) -> None:
-        """Update session state after network config changes."""
+        """网络配置变更后，同步刷新会话状态。"""
         self.session.network_test_message = ""
         self.session.last_error_text = ""
         self.session.token_status_message = "网络配置已修改，请重新测试"
@@ -106,7 +106,7 @@ class AdvancedSettingsController:
         self.changed = True
 
     def _handle_test_proxy(self) -> None:
-        """Test proxy connectivity."""
+        """测试代理连通性。"""
         proxy = self.config.export_defaults.proxy
         if not proxy.host:
             self.session.network_test_message = "代理未配置，请先设置代理地址"
@@ -122,7 +122,7 @@ class AdvancedSettingsController:
             self.session.network_test_message = f"代理测试失败：{exc}"
 
     def _handle_test_direct_connection(self) -> None:
-        """Test direct connection without proxy."""
+        """测试直连网络状态。"""
         try:
             client = self.build_client_from_config(self.config, self.config.token or "")
             success, message = client.test_direct_connection()

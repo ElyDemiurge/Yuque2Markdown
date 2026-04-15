@@ -1,4 +1,4 @@
-"""Tests for lake converter."""
+"""Lake 转 Markdown 测试。"""
 import json
 import sys
 sys.path.insert(0, ".")

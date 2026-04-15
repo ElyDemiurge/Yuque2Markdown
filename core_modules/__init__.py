@@ -1,1 +1,1 @@
-"""Yuque exporter core modules."""
+"""Yuque2Markdown 核心模块。"""

@@ -2,26 +2,26 @@
 
 ## 适用范围
 
-这份文档用于排查以下几类常见问题：
+这份文档主要覆盖：
 
 - Token 无效或无法访问语雀 API
 - 代理配置错误或网络不可达
 - 导出过程中资源下载失败
-- Lake 转 Markdown 时出现 warning 或异常
+- Lake 转 Markdown 时出现警告或异常
 - 导出中断后如何恢复
-- 转换逻辑修复后如何批量重生成 Markdown
+- 转换逻辑修复后如何批量根据 `.lake` 重新写出 Markdown 文件
 
-如果你只是想快速开始使用项目，请先看 [../README.md](../README.md)。如果你在定位测试失败，请同时参考 [TESTING.md](TESTING.md)。
+想快速开始先看 [../README.md](../README.md)；定位测试失败时再配合 [TESTING.md](TESTING.md)。
 
 ## 先看哪些文件
 
-排查问题时，通常优先查看以下几类文件：
+排查时优先看这些文件：
 
 - `output/<知识库>/export.log`
-  导出过程的主日志，包含每篇文档的开始、转换、资源下载、完成、warning 和 error。
+  导出过程的主日志，包含每篇文档的开始、转换、资源下载、完成、警告和错误。
 - `output/<知识库>/regenerate.log`
-  批量重转日志。只有在执行 `python regenerate_md.py` 后才会生成或追加。
-  如果本地已有 `assets/`，脚本会优先复用这些图片文件并改写 Markdown 中对应的远程图片链接。
+  重新写出 Markdown 文件的日志。执行 `python regenerate_md.py` 后生成或追加。
+  如果本地已有 `assets/`，脚本会优先复用这些图片并改写 Markdown 链接。
 - `output/<知识库>/_export_checkpoint.json`
   导出断点文件，用于记录已完成、失败和处理中状态。
 - 某篇文档目录下的：
@@ -30,9 +30,9 @@
   - `文档名.lake`
   - `assets/`
 
-建议排查顺序：
+建议顺序：
 
-1. 先看 `export.log` 或 `regenerate.log` 中是否有明确 warning / error。
+1. 先看 `export.log` 或 `regenerate.log` 中是否有明确的警告或错误。
 2. 再看具体文档目录下的 `.md`、`.lake` 和 `.yuque.json` 是否一致。
 3. 最后再回到代码和测试定位具体模块。
 
@@ -54,7 +54,7 @@
 
 ### 进一步定位
 
-如果错误只在请求阶段出现，而配置本身无误，优先检查：
+如果只在请求这一步报错，优先检查：
 
 - 当前网络是否能访问语雀
 - 是否有公司代理、本地代理或抓包工具影响 HTTPS 请求
@@ -79,8 +79,8 @@
 
 ### 建议
 
-- 如果只是临时网络波动，不建议马上修改代码，先重试导出。
-- 如果代理只对部分域名可达，需要同时验证语雀 API 域名与资源 CDN 域名。
+- 临时网络波动时先重试，不必马上改代码。
+- 如果代理只对部分域名可达，需要同时验证语雀 API 域名和资源 CDN 域名。
 
 ## 导出过程中资源下载失败
 
@@ -118,16 +118,16 @@
 
 ### 建议
 
-- 如果是单个外部 URL 失败，先确认它是否真的应该下载到本地。
-- 如果是语雀附件未下载，但 Markdown 中仍保留原始链接，这属于当前版本的预期结果。
-- 如果是批量图片失败，优先检查代理和网络环境。
-- 如果日志显示 Markdown 已生成但资源未本地化，可重点看 `localizer.py` 相关逻辑，并运行对应测试。
+- 单个外部 URL 失败时，先确认它是否真的需要下载到本地。
+- 当前版本会下载 Markdown 中的图片资源，但不会下载语雀附件；语雀附件链接会保留在 Markdown 中。
+- 批量图片失败时，优先检查代理和网络环境。
+- 如果 Markdown 已生成但资源没本地化，可重点查看 `localizer.py` 并运行对应测试。
 
-## Lake 转 Markdown 出现 warning
+## Lake 转 Markdown 出现警告
 
 ### 常见表现
 
-`export.log` 中会出现类似 warning：
+`export.log` 中会出现类似警告：
 
 ```text
 Lake 转换遇到未专门处理的标签: <tag>
@@ -135,10 +135,10 @@ HTML 表格解析失败
 未支持 card 类型: xxx
 ```
 
-### 含义
+### 说明
 
 - `未专门处理的标签`
-  通常说明原始 Lake 中出现了转换器没有显式处理的 HTML/Lake 标签。
+  通常表示原始 Lake 中出现了转换器未显式处理的 HTML/Lake 标签。
 - `HTML 表格解析失败`
   通常与表格 card 中的 HTML 结构、void 元素、自定义属性或转义内容有关。
 - `未支持 card 类型`
@@ -149,7 +149,7 @@ HTML 表格解析失败
 1. 从日志定位具体文档标题。
 2. 打开该文档目录下的 `.lake` 文件，搜索对应标签或 card。
 3. 再打开 `.md` 文件，确认最终缺失的是哪一段内容。
-4. 如果是回归问题，先运行：
+4. 如果是修复后再次出现的问题，先运行：
 
 ```bash
 python -m pytest testcases/test_markdown_converter.py
@@ -163,8 +163,8 @@ python -m pytest testcases/test_localizer.py testcases/test_export_flow.py
 
 ### 实用建议
 
-- Lake 相关问题优先构造最小复现样例写进测试，而不是直接依赖完整导出样本。
-- 如果你已经修复了转换逻辑，可以用 `regenerate_md.py` 对已有导出结果批量重转，而不必重新拉取所有文档。
+- Lake 相关问题优先写最小复现测试，不要直接依赖完整导出样本。
+- 如果只修了转换逻辑，可用 `regenerate_md.py` 根据 `.lake` 重新写出 Markdown 文件，不必重新拉取全部文档。
 
 ## 导出中断后如何恢复
 
@@ -197,11 +197,11 @@ _export_checkpoint.json
 
 ### 注意
 
-只有在确认断点文件内容异常、且你接受重新导出时，才建议删除它。默认应优先保留，以免丢失已完成状态。
+只有在确认断点文件异常、且接受重新导出时，才建议删除它。默认应优先保留。
 
-## 什么时候使用 `regenerate_md.py`
+## 什么时候使用 `regenerate_md.py` 根据 `.lake` 重新写出 Markdown 文件
 
-适合以下场景：
+适合这些场景：
 
 - 你已经导出了 `.lake` 和 `.yuque.json`
 - 只是 Lake 转 Markdown 逻辑修复了
@@ -217,14 +217,14 @@ python regenerate_md.py
 
 - 遍历 `output/` 下的 `.lake` 文件
 - 找到同目录下对应的 `.yuque.json`
-- 调用 `render_doc_markdown()` 重新生成 Markdown
+- 调用 `render_doc_markdown()` 重新写出 Markdown 文件
 - 覆盖写回对应 `.md`
 - 将过程记录到 `regenerate.log`
 
 ### 注意事项
 
-- `regenerate.log` 采用追加写入，旧 warning 可能仍然保留在历史日志里。
-- 判断本次是否修复成功时，应重点看最新一轮日志尾部，而不是只统计整个文件中的 warning 次数。
+- `regenerate.log` 采用追加写入，旧警告可能仍会保留。
+- 判断本次是否修复成功时，应重点看最新一轮日志尾部。
 
 ## 如何判断问题属于哪一层
 
@@ -266,7 +266,7 @@ python regenerate_md.py
 
 - Markdown 结构异常
 - 表格、代码块、卡片丢失
-- warning 集中出现在转换阶段
+- 警告主要集中在转换阶段
 
 优先看：
 
@@ -304,7 +304,7 @@ python -m pytest testcases/
 python -m pytest testcases/test_markdown_converter.py
 ```
 
-只看本地化与导出链路：
+只看本地化与导出过程：
 
 ```bash
 python -m pytest testcases/test_localizer.py testcases/test_export_flow.py
@@ -319,7 +319,7 @@ python regenerate_md.py
 ## 相关文档
 
 - [../README.md](../README.md)：项目总览与常用入口
-- [ARCHITECTURE.md](ARCHITECTURE.md)：模块职责与关键数据流
+- [ARCHITECTURE.md](ARCHITECTURE.md)：模块职责与主要执行顺序
 - [TESTING.md](TESTING.md)：测试运行方式与覆盖范围
 - [配置文件说明.md](配置文件说明.md)：配置字段说明
 - [语雀lake格式解析.md](语雀lake格式解析.md)：Lake 转换规则

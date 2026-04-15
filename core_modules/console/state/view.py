@@ -1,8 +1,8 @@
-"""View/state presentation helpers for Yuque2Markdown console."""
+"""控制台状态展示辅助函数。"""
 
 from __future__ import annotations
 
-from core_modules.config.models import AppConfig, SessionState, summarize_attachment_suffixes
+from core_modules.config.models import AppConfig, SessionState
 from core_modules.config.store import config_path
 
 
@@ -14,6 +14,10 @@ def mask_token(token: str) -> str:
     if not token:
         return "未设置"
     return "******" + token[-4:] if len(token) > 4 else "******"
+
+
+def _confirm_value_line(label: str, value: str) -> str:
+    return f"    {label}: {value}"
 
 
 def dedupe_error_text(status_message: str, error_text: str) -> str:
@@ -59,38 +63,46 @@ def build_connection_status(status_message: str, rate_limit_summary: str, error_
 
 
 def build_confirmation_lines(config: AppConfig, session: SessionState, *, build_selected_docs_text) -> list[str]:
-    attachment_status = "官方 API 暂不支持导出语雀附件，保留原始链接（图片仍下载）"
+    attachment_status = "图片会下载到本地，语雀附件保留原始链接（API 暂不支持导出）"
+    defaults = config.export_defaults
     lines = [
         "[连接与身份]",
-        f"当前用户: {session.current_user_label}",
-        f"Token 状态: {'已设置' if config.token else '未设置'} | 持久化: {bool_text(config.persist_token)}",
+        _confirm_value_line("当前用户", session.current_user_label),
+        _confirm_value_line("Token", f"{'已设置' if config.token else '未设置'} | 保存到配置文件 {bool_text(config.persist_token)}"),
+        "",
         "[知识库与范围]",
-        f"知识库: {session.repo_display_name or session.repo_input or '未设置'}",
-        f"命名空间: {session.repo_namespace or session.repo_input or '未设置'}",
+        _confirm_value_line("知识库", session.repo_display_name or session.repo_input or "未设置"),
+        _confirm_value_line("命名空间", session.repo_namespace or session.repo_input or "未设置"),
     ]
     if session.repo_url:
-        lines.append(f"链接: {session.repo_url}")
+        lines.append(_confirm_value_line("链接", session.repo_url))
     lines.extend(
         [
-            f"文档范围: {build_selected_docs_text(session)}",
+            _confirm_value_line("文档范围", build_selected_docs_text(session)),
+            "",
             "[导出路径与资源]",
-            f"输出目录: {config.export_defaults.output_dir}",
-            f"断点续导: {bool_text(config.export_defaults.resume)}",
-            f"严格模式: {bool_text(config.export_defaults.strict)}",
-            f"离线资源: {bool_text(config.export_defaults.offline_assets)}",
-            f"资源目录: {config.export_defaults.assets_dir_name}",
-            f"附件下载: {attachment_status}",
-            f"API 请求间隔: {config.export_defaults.request_interval}",
-            f"API 请求超时: {config.export_defaults.timeout}s",
-            f"检查 Token 可用性超时: {config.export_defaults.token_check_timeout}s",
-            f"API 请求失败重试次数: {config.export_defaults.request_max_retries}",
-            f"限流初始等待: {config.export_defaults.rate_limit_backoff_seconds}s",
-            f"网络错误初始等待: {config.export_defaults.network_backoff_seconds}s",
-            f"最大重试等待时长: {config.export_defaults.max_backoff_seconds}s",
-            f"最多导出文档数: {'不限' if config.export_defaults.max_docs is None else config.export_defaults.max_docs}",
+            _confirm_value_line("输出目录", defaults.output_dir),
+            _confirm_value_line(
+                "导出选项",
+                f"已完成文档可继续跳过 {bool_text(defaults.resume)} | 出错后立即停止 {bool_text(defaults.strict)} | 下载图片到本地 {bool_text(defaults.offline_assets)}",
+            ),
+            _confirm_value_line("资源目录", defaults.assets_dir_name),
+            _confirm_value_line("附件下载", attachment_status),
+            _confirm_value_line(
+                "请求设置",
+                f"间隔 {defaults.request_interval}s | 请求超时 {defaults.timeout}s | 检查 Token 超时 {defaults.token_check_timeout}s",
+            ),
+            _confirm_value_line(
+                "重试设置",
+                f"最多重试 {defaults.request_max_retries} 次 | 限流后首次等待 {defaults.rate_limit_backoff_seconds}s | 网络错误后首次等待 {defaults.network_backoff_seconds}s",
+            ),
+            _confirm_value_line("等待上限", f"单次重试最多等待 {defaults.max_backoff_seconds}s"),
+            _confirm_value_line("导出上限", "不限" if defaults.max_docs is None else f"{defaults.max_docs} 篇"),
+            "",
             "[保存状态]",
-            f"配置文件: {config_path()}",
-            f"未保存修改: {bool_text(session.dirty)}",
+            _confirm_value_line("配置文件", config_path().name),
+            _confirm_value_line("完整路径", str(config_path())),
+            _confirm_value_line("未保存修改", bool_text(session.dirty)),
         ]
     )
     return lines
@@ -209,7 +221,7 @@ def build_status_lines(config: AppConfig, session: SessionState, rate_limit_summ
     return [
         f"{token_color}Token: {token_status}",
         f"知识库: {repo_status}",
-        f"导出文章范围: {scope_status}",
+        f"导出范围: {scope_status}",
         f"{network_color}网络: {network_status}",
         f"配置文件: {config_path().name}",
     ]

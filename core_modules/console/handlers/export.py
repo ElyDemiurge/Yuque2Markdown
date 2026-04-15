@@ -1,4 +1,4 @@
-"""Export handler for Yuque2Markdown console."""
+"""控制台导出流程处理器。"""
 
 from core_modules.config.models import AppConfig, SessionState, build_export_options
 from core_modules.console.menu import run_confirmation, show_message
@@ -21,7 +21,7 @@ def handle_export(
     format_error_detail,
     format_rate_limit,
 ) -> str:
-    """Handle the full export flow."""
+    """执行一次完整导出流程。"""
     token = (config.token or "").strip()
     if not session.connection_ok or not token:
         session.token_status_message = "请先设置有效 Token"
@@ -61,10 +61,18 @@ def handle_export(
             cancel_label="继续导出",
         )
 
+    result_lines_holder: dict[str, list[str]] = {"lines": []}
+
+    def _build_completion_lines(export_result):
+        lines = build_result_lines(config, session, export_result)
+        result_lines_holder["lines"] = lines
+        return lines
+
     try:
         result = progress_ui.run(
             lambda: execute_export(client, options, progress_callback=_on_progress),
             on_interrupt=_confirm_interrupt,
+            on_complete=_build_completion_lines,
         )
     except KeyboardInterrupt:
         session.status_message = "已取消导出"
@@ -82,11 +90,10 @@ def handle_export(
     if config.ui_preferences.auto_save_after_export:
         config = persist_config(config, session, "post_export")
     session.last_exported_docs = result.exported_docs
-    session.last_result_summary = build_result_lines(config, session, result)
+    session.last_result_summary = result_lines_holder["lines"] or build_result_lines(config, session, result)
     session.status_message = "导出完成"
     session.last_error_text = ""
     append_console_log(
         f"EXPORT_SUCCESS repo={session.repo_input} exported={result.exported_docs} skipped={result.skipped_docs} failed={result.failed_docs}"
     )
-    show_message("导出完成", session.last_result_summary)
     return format_rate_limit(client.last_rate_limit)

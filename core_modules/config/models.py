@@ -23,8 +23,8 @@ def normalize_attachment_suffixes(values: list[str] | tuple[str, ...] | set[str]
     - `[]` 表示当前不下载任何附件，仅保留远程链接
     - 其他值按扩展名列表处理，例如 `[".pdf", ".mp4"]`
 
-    当前版本中，这些配置主要用于保留附件下载策略结构；
-    语雀附件实际仍保持原始链接，不会据此触发下载。
+    当前版本中，这些配置主要用于保留附件下载相关配置字段；
+    工具会下载 Markdown 中的图片资源，但不会下载语雀附件。
     """
     if values is None:
         return list(DEFAULT_ATTACHMENT_SUFFIXES)

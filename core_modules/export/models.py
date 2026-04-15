@@ -89,7 +89,9 @@ class ExportResult:
 @dataclass(slots=True)
 class ProgressSnapshot:
     """导出进度的快照，通过回调传递给 UI。"""
+    export_started_monotonic: float = 0.0
     current_doc_title: str = ""
+    current_doc_started_monotonic: float = 0.0
     current_stage: str = "准备中"
     processed_docs: int = 0
     total_docs: int = 0

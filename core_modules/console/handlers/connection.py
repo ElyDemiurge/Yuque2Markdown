@@ -1,9 +1,8 @@
-"""Connection handlers for Yuque2Markdown console."""
+"""控制台连接状态处理逻辑。"""
 
 from __future__ import annotations
 
 import threading
-import time
 
 from core_modules.config.models import AppConfig, SessionState
 from core_modules.console.menu import MenuRefreshState
@@ -23,7 +22,7 @@ def refresh_connection_state(
     append_console_log,
     interactive: bool = False,
 ) -> tuple[list[dict], str, str, bool]:
-    """Refresh token/connection state."""
+    """刷新 Token、当前用户和连接状态。"""
     session.network_test_message = ""
     if not token:
         session.current_user_label = "未检查"
@@ -65,7 +64,7 @@ def refresh_connection_state(
 
     try:
         if interactive:
-            refresh_state = MenuRefreshState(lines=["正在检查 Token、当前用户和限流状态", "如遇语雀限流，将返回专门提示", "."])
+            refresh_state = MenuRefreshState(lines=["正在检查 Token、当前用户和限流状态", "如遇语雀限流，将返回专门提示"])
             session.menu_refresh_state = refresh_state
             session.transient_lines = refresh_state.lines
             append_console_log("开始刷新连接状态")
@@ -78,22 +77,8 @@ def refresh_connection_state(
                 finally:
                     refresh_state.done = True
 
-            def _animate() -> None:
-                frame_index = 0
-                while not refresh_state.done:
-                    refresh_state.lines = [
-                        "正在检查 Token、当前用户和限流状态",
-                        "如遇语雀限流，将返回专门提示",
-                        [".", "..", "...", "....", ".....", "......"][frame_index % 6],
-                    ]
-                    session.transient_lines = refresh_state.lines
-                    frame_index += 1
-                    time.sleep(refresh_state.refresh_interval)
-
             worker = threading.Thread(target=_worker, daemon=True)
-            animator = threading.Thread(target=_animate, daemon=True)
             worker.start()
-            animator.start()
             return [], "处理中", build_connection_status("正在检查 Token、当前用户和限流状态", "暂无", ""), False
         return _run_refresh()
     except YuqueRateLimitError as exc:

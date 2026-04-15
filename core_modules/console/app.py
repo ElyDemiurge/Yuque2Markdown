@@ -119,7 +119,7 @@ def run_console_app() -> int:
                 config = _persist_config(config, session, "repo_input")
             continue
         if key == "select_repo":
-            if _handle_repo_selection(session, repos, rate_limit_summary):
+            if _handle_repo_selection(config, session, repos, rate_limit_summary):
                 config = _persist_config(config, session, "repo_selected")
             continue
         if key == "export_settings":
@@ -185,9 +185,9 @@ def _handle_repo_input_inline(config: AppConfig, session: SessionState, value: s
     return _handler(config, session, value, build_client_from_config=_build_client_from_config)
 
 
-def _handle_repo_selection(session: SessionState, repos: list[dict], rate_limit_summary: str) -> bool:
+def _handle_repo_selection(config: AppConfig, session: SessionState, repos: list[dict], rate_limit_summary: str) -> bool:
     from core_modules.console.handlers.repo import handle_repo_selection as _handler
-    return _handler(session, repos, rate_limit_summary)
+    return _handler(config, session, repos, rate_limit_summary, build_client_from_config=_build_client_from_config)
 
 
 def _handle_doc_selection(config: AppConfig, session: SessionState, rate_limit_summary: str) -> tuple[str, bool]:

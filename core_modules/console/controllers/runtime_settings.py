@@ -12,7 +12,7 @@ from core_modules.config.models import AppConfig, SessionState
 
 
 class RuntimeSettingsController:
-    """Controller for runtime settings menu operations."""
+    """管理“运行与网络设置”子菜单。"""
 
     def __init__(self, config: AppConfig, session: SessionState, *, status_lines_builder=None):
         self.config = config
@@ -21,11 +21,7 @@ class RuntimeSettingsController:
         self.changed = False
 
     def run(self) -> bool:
-        """Run the runtime settings menu and handle user interactions.
-
-        Returns:
-            bool: True if any settings were changed, False otherwise.
-        """
+        """运行“运行与网络设置”子菜单并处理交互。"""
         while True:
             items = self._build_menu_items()
             action = run_menu(
@@ -61,7 +57,7 @@ class RuntimeSettingsController:
                 self._handle_toggle(key)
 
     def _build_menu_items(self) -> list[MenuItem]:
-        """Build menu items for runtime settings."""
+        """构造运行设置菜单项。"""
         defaults = self.config.export_defaults
 
         return [
@@ -70,9 +66,9 @@ class RuntimeSettingsController:
             MenuItem("timeout", "API 请求超时", f"{defaults.timeout}s", input_style=True, edit_value=str(defaults.timeout)),
             MenuItem("token_check_timeout", "检查 Token 可用性超时", f"{defaults.token_check_timeout}s", input_style=True, edit_value=str(defaults.token_check_timeout)),
             MenuItem("request_max_retries", "API 请求失败重试次数", str(defaults.request_max_retries), input_style=True),
-            MenuItem("rate_limit_backoff_seconds", "限流初始等待", f"{defaults.rate_limit_backoff_seconds}s", input_style=True, edit_value=str(defaults.rate_limit_backoff_seconds)),
-            MenuItem("network_backoff_seconds", "网络错误初始等待", f"{defaults.network_backoff_seconds}s", input_style=True, edit_value=str(defaults.network_backoff_seconds)),
-            MenuItem("max_backoff_seconds", "最大重试等待时长", f"{defaults.max_backoff_seconds}s", input_style=True, edit_value=str(int(defaults.max_backoff_seconds))),
+            MenuItem("rate_limit_backoff_seconds", "触发限流后的首次等待时间", f"{defaults.rate_limit_backoff_seconds}s", input_style=True, edit_value=str(defaults.rate_limit_backoff_seconds)),
+            MenuItem("network_backoff_seconds", "网络错误后的首次等待时间", f"{defaults.network_backoff_seconds}s", input_style=True, edit_value=str(defaults.network_backoff_seconds)),
+            MenuItem("max_backoff_seconds", "单次重试等待上限", f"{defaults.max_backoff_seconds}s", input_style=True, edit_value=str(int(defaults.max_backoff_seconds))),
             MenuItem("max_docs", "最多导出文档数", "不限" if defaults.max_docs is None else str(defaults.max_docs), input_style=True, edit_value="" if defaults.max_docs is None else str(defaults.max_docs)),
             MenuItem("section_prefs", "── 偏好 ──", item_type="section", focusable=False),
             MenuItem("confirm_before_export", "导出前显示确认对话框", self._bool_text(self.config.ui_preferences.confirm_before_export), item_type="bool"),
@@ -81,20 +77,20 @@ class RuntimeSettingsController:
         ]
 
     def _build_status_lines(self) -> list[str]:
-        """Build status lines for submenu."""
+        """构造子菜单状态栏文本。"""
         if self.status_lines_builder is not None:
             return self.status_lines_builder(self.config, self.session)
         return ["配置已保存" if not self.session.dirty else "有未保存的修改"]
 
     def _remember_menu_index(self, items: list[MenuItem], key: str) -> None:
-        """Remember the menu index for the given action key."""
+        """记住当前菜单光标位置。"""
         for index, item in enumerate(items):
             if item.key == key:
                 self.session.menu_index_map["runtime_settings"] = index
                 return
 
     def _handle_request_interval(self, value: str) -> None:
-        """Handle request interval setting change."""
+        """处理请求间隔修改。"""
         parsed = parse_non_negative_float(value)
         if parsed is not None:
             self.config.export_defaults.request_interval = parsed
@@ -103,7 +99,7 @@ class RuntimeSettingsController:
             self.changed = True
 
     def _handle_timeout(self, value: str) -> None:
-        """Handle timeout setting change."""
+        """处理请求超时修改。"""
         parsed = parse_positive_int(value)
         if parsed is not None:
             self.config.export_defaults.timeout = parsed
@@ -112,7 +108,7 @@ class RuntimeSettingsController:
             self.changed = True
 
     def _handle_token_check_timeout(self, value: str) -> None:
-        """Handle token check timeout setting change."""
+        """处理 Token 检查超时修改。"""
         parsed = parse_positive_int(value)
         if parsed is not None:
             self.config.export_defaults.token_check_timeout = parsed
@@ -121,7 +117,7 @@ class RuntimeSettingsController:
             self.changed = True
 
     def _handle_request_max_retries(self, value: str) -> None:
-        """Handle request max retries setting change."""
+        """处理请求重试次数修改。"""
         parsed = parse_positive_int(value)
         if parsed is not None:
             self.config.export_defaults.request_max_retries = parsed
@@ -130,34 +126,34 @@ class RuntimeSettingsController:
             self.changed = True
 
     def _handle_rate_limit_backoff(self, value: str) -> None:
-        """Handle rate limit backoff setting change."""
+        """处理触发限流后的首次等待时间修改。"""
         parsed = parse_non_negative_float(value)
         if parsed is not None:
             self.config.export_defaults.rate_limit_backoff_seconds = parsed
-            self.session.status_message = "已更新限流初始等待"
+            self.session.status_message = "已更新触发限流后的首次等待时间"
             self.session.dirty = True
             self.changed = True
 
     def _handle_network_backoff(self, value: str) -> None:
-        """Handle network backoff setting change."""
+        """处理网络错误后的首次等待时间修改。"""
         parsed = parse_non_negative_float(value)
         if parsed is not None:
             self.config.export_defaults.network_backoff_seconds = parsed
-            self.session.status_message = "已更新网络错误初始等待"
+            self.session.status_message = "已更新网络错误后的首次等待时间"
             self.session.dirty = True
             self.changed = True
 
     def _handle_max_backoff(self, value: str) -> None:
-        """Handle max backoff setting change."""
+        """处理单次重试等待上限修改。"""
         parsed = parse_positive_int(value)
         if parsed is not None:
             self.config.export_defaults.max_backoff_seconds = float(parsed)
-            self.session.status_message = "已更新最大重试等待时长"
+            self.session.status_message = "已更新单次重试等待上限"
             self.session.dirty = True
             self.changed = True
 
     def _handle_max_docs(self, value: str) -> None:
-        """Handle max docs setting change."""
+        """处理最大导出文档数修改。"""
         parsed = parse_optional_positive_int(value)
         self.config.export_defaults.max_docs = parsed
         self.session.status_message = "已更新最多导出文档数"
@@ -165,12 +161,17 @@ class RuntimeSettingsController:
         self.changed = True
 
     def _handle_toggle(self, key: str) -> None:
-        """Handle boolean toggle setting change."""
+        """处理布尔开关项切换。"""
         toggle_config_value(self.config, key)
-        self.session.status_message = f"已更新: {key}"
+        label_map = {
+            "confirm_before_export": "导出前确认",
+            "auto_save_after_export": "导出后自动保存配置",
+            "persist_token": "保存 Token 到配置文件",
+        }
+        self.session.status_message = f"已更新{label_map.get(key, key)}"
         self.session.dirty = True
         self.changed = True
 
     def _bool_text(self, value: bool) -> str:
-        """Convert boolean to Chinese text."""
+        """将布尔值转为界面文案。"""
         return "开启" if value else "关闭"

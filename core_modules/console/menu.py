@@ -36,7 +36,6 @@ TEXT_HELP_LINES = ["输入内容后 Enter 确认 | Esc 取消 | ←→ 移动 | 
 CONFIRM_HELP_LINES = ["↑↓ 移动 | Enter 确认 | q 取消"]
 SELECT_HELP_LINES = ["↑↓ 移动 | Enter 选择 | q 返回 | 输入开始过滤 | / 过滤模式 | Backspace 清空"]
 MESSAGE_HELP_LINES = ["任意键返回"]
-WAITING_FRAMES = [".", "..", "...", "....", ".....", "......"]
 
 
 @dataclass(slots=True)
@@ -82,18 +81,17 @@ def run_menu(
     def _render(stdscr) -> str | None:
         nonlocal index, transient_lines, editing_index, edit_chars, edit_cursor
         curses.curs_set(0)
+        last_signature: tuple | None = None
         if refresh_state is not None:
             stdscr.timeout(max(1, int(refresh_state.refresh_interval * 1000)))
         else:
             stdscr.timeout(-1)
         while True:
-            stdscr.clear()
             if refresh_state is not None:
                 transient_lines = refresh_state.lines
             height, width = stdscr.getmaxyx()
             help_text = _menu_help_lines(help_lines, editing_index is not None)
-            edit_cursor_pos = _render_menu_frame(
-                stdscr,
+            signature = _menu_signature(
                 title=title,
                 items=items,
                 lines=lines,
@@ -106,6 +104,25 @@ def run_menu(
                 height=height,
                 width=width,
             )
+            if signature != last_signature:
+                stdscr.clear()
+                edit_cursor_pos = _render_menu_frame(
+                    stdscr,
+                    title=title,
+                    items=items,
+                    lines=lines,
+                    help_text=help_text,
+                    transient_lines=transient_lines,
+                    index=index,
+                    editing_index=editing_index,
+                    edit_chars=edit_chars,
+                    edit_cursor=edit_cursor,
+                    height=height,
+                    width=width,
+                )
+                last_signature = signature
+            else:
+                edit_cursor_pos = (0, 0)
             if editing_index is not None:
                 curses.curs_set(2)  # 块状光标更明显
                 stdscr.move(edit_cursor_pos[0], edit_cursor_pos[1])
@@ -145,6 +162,49 @@ def run_menu(
                 return action
 
     return curses.wrapper(_render)
+
+
+def _menu_signature(
+    *,
+    title: str,
+    items: list[MenuItem],
+    lines: list[str],
+    help_text: list[str],
+    transient_lines: list[str] | None,
+    index: int,
+    editing_index: int | None,
+    edit_chars: list[str],
+    edit_cursor: int,
+    height: int,
+    width: int,
+) -> tuple:
+    item_signature = tuple(
+        (
+            item.key,
+            item.title,
+            item.value,
+            item.item_type,
+            item.focusable,
+            item.input_style,
+            item.indent,
+            item.inline_selected_index,
+            tuple((choice.key, choice.label, choice.checked) for choice in item.inline_choices),
+        )
+        for item in items
+    )
+    return (
+        title,
+        tuple(lines),
+        tuple(help_text),
+        tuple(transient_lines or []),
+        index,
+        editing_index,
+        tuple(edit_chars),
+        edit_cursor,
+        height,
+        width,
+        item_signature,
+    )
 
 
 def _menu_help_lines(help_lines: list[str] | None, editing: bool) -> list[str]:
@@ -378,7 +438,9 @@ def run_confirmation(
                     break
                 prefix = ">" if offset == index else " "
                 attrs = curses.A_REVERSE if offset == index else 0
-                stdscr.addnstr(current_row, left, _truncate(f"{prefix} {item.title}", content_width), content_width, attrs)
+                button_text = _truncate(f"{prefix} {item.title}", content_width)
+                button_x = max(left, left + (content_width - _display_width(button_text)) // 2)
+                stdscr.addnstr(current_row, button_x, button_text, min(content_width, width - button_x), attrs)
             key = stdscr.getch()
             if key == curses.KEY_UP:
                 index = max(0, index - 1)
@@ -594,23 +656,19 @@ def run_waiting_message(title: str, lines: list[str], worker) -> object:
 
     def _run(stdscr):
         curses.curs_set(0)
-        frame_index = 0
+        stdscr.clear()
+        height, width = stdscr.getmaxyx()
+        stdscr.addnstr(0, 0, title, width - 1, curses.A_BOLD)
+        stdscr.addnstr(1, 0, "正在处理中，请稍候", width - 1, curses.A_BOLD)
+        row = 3
+        for line in lines:
+            if row >= height:
+                break
+            stdscr.addnstr(row, 0, _truncate(line, width - 1), width - 1)
+            row += 1
+        stdscr.refresh()
         while thread.is_alive():
-            stdscr.clear()
-            height, width = stdscr.getmaxyx()
-            stdscr.addnstr(0, 0, title, width - 1, curses.A_BOLD)
-            stdscr.addnstr(1, 0, "正在处理中，请稍候", width - 1, curses.A_BOLD)
-            row = 3
-            for line in lines:
-                if row >= height:
-                    break
-                stdscr.addnstr(row, 0, _truncate(line, width - 1), width - 1)
-                row += 1
-            if row < height:
-                stdscr.addnstr(row, 0, WAITING_FRAMES[frame_index % len(WAITING_FRAMES)], width - 1, curses.A_BOLD)
-            stdscr.refresh()
-            frame_index += 1
-            time.sleep(0.18)
+            time.sleep(0.1)
         return None
 
     curses.wrapper(_run)

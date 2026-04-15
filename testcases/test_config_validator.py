@@ -1,4 +1,4 @@
-"""Tests for config validation."""
+"""配置校验测试。"""
 import sys
 sys.path.insert(0, ".")
 
@@ -28,7 +28,7 @@ def test_invalid_version():
 
 
 def test_short_token_warning():
-    """Very short tokens should produce a warning (not an error, since empty is allowed)."""
+    """过短的 Token 应产生 warning，而不是 error。"""
     config = AppConfig(token="abc")
     errors = validate_config(config)
     assert any(e.field == "token" for e in errors)
@@ -73,7 +73,7 @@ def test_retries_out_of_range():
 
 
 def test_backoff_cross_field_validation():
-    """max_backoff should be >= individual backoff values."""
+    """max_backoff 应不小于各类等待时间。"""
     defaults = ExportDefaultsConfig(
         rate_limit_backoff_seconds=10.0,
         network_backoff_seconds=5.0,

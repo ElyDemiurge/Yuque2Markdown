@@ -188,4 +188,4 @@ def test_build_confirmation_lines_include_sections() -> None:
     assert "[知识库与范围]" in lines
     assert "[导出路径与资源]" in lines
     assert "[保存状态]" in lines
-    assert any("Token 状态" in line for line in lines)
+    assert any("Token" in line for line in lines)

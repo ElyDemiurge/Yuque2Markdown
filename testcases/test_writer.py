@@ -1,4 +1,4 @@
-"""Tests for export writer utilities."""
+"""导出写文件工具测试。"""
 import sys
 sys.path.insert(0, ".")
 

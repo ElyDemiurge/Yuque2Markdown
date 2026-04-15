@@ -1,4 +1,4 @@
-"""Tests for export flow."""
+"""导出流程测试。"""
 import sys
 sys.path.insert(0, ".")
 

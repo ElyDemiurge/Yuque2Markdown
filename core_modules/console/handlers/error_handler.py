@@ -1,7 +1,4 @@
-"""Common error handling utilities for Yuque2Markdown console.
-
-This module provides centralized error handling patterns to reduce code duplication.
-"""
+"""控制台错误处理辅助函数。"""
 
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -12,7 +9,7 @@ if TYPE_CHECKING:
 
 @dataclass(slots=True)
 class ErrorContext:
-    """Context information for error handling."""
+    """描述一次错误处理所需的上下文。"""
 
     title: str
     error: Exception
@@ -21,7 +18,7 @@ class ErrorContext:
 
 @dataclass(slots=True)
 class ErrorResult:
-    """Result of error handling."""
+    """封装错误处理结果。"""
 
     message: str
     detail: str
@@ -29,7 +26,7 @@ class ErrorResult:
 
 
 def format_error_detail(exc: Exception) -> str:
-    """Format error detail as 'status / message' format."""
+    """将异常格式化为“状态码 / 消息”的形式。"""
     status = getattr(exc, "status", None)
     message = str(exc)
     if status:
@@ -45,11 +42,7 @@ def update_session_error_state(
     connection_ok: bool = False,
     current_user_label: str = "未检查",
 ) -> None:
-    """Update session state after an error occurs.
-
-    This consolidates the common pattern of updating multiple session fields
-    when an error occurs during connection, export, or other operations.
-    """
+    """错误发生后，统一更新会话状态。"""
     if token_message:
         session.token_status_message = token_message
     if error_text:
@@ -67,24 +60,12 @@ def handle_connection_error(
     proxy_test_func=None,
     log_func=None,
 ) -> ErrorResult:
-    """Handle connection errors with proxy-aware error messages.
-
-    Args:
-        session: Session state to update
-        exc: The exception that occurred
-        proxy_enabled: Whether proxy is enabled
-        proxy_host: Proxy host address
-        proxy_test_func: Function to test proxy connectivity
-        log_func: Function to log messages
-
-    Returns:
-        ErrorResult with error details
-    """
+    """处理连接异常，并根据代理状态给出更具体的提示。"""
     from core_modules.export.errors import YuqueRateLimitError
 
     error_str = str(exc)
 
-    # Rate limit error
+    # 限流错误
     if isinstance(exc, YuqueRateLimitError):
         retry_after = getattr(exc, "retry_after", None)
         wait_hint = f"建议等待 {int(retry_after)} 秒后再试" if retry_after else "建议稍后再试"
@@ -100,7 +81,7 @@ def handle_connection_error(
             log_func(f"刷新连接限流: {detail}")
         return ErrorResult(message=message, detail=detail)
 
-    # Proxy-related error
+    # 代理相关错误
     if proxy_enabled and proxy_host and proxy_test_func:
         proxy_ok, proxy_msg = proxy_test_func()
         if not proxy_ok:
@@ -126,7 +107,7 @@ def handle_connection_error(
             log_func(f"刷新连接失败（API 问题）: {error_str}")
         return ErrorResult(message=message, detail=error_str)
 
-    # Generic connection error
+    # 其他通用连接错误
     message = "连接检查失败"
     update_session_error_state(
         session,
@@ -151,24 +132,7 @@ def handle_export_doc_error(
     log,
     strict_mode: bool = False,
 ) -> bool:
-    """Handle errors during document export.
-
-    This consolidates the error handling pattern in exporter.py.
-
-    Args:
-        exc: The exception that occurred
-        doc_id: Document ID (may be None)
-        doc_title: Document title for logging
-        checkpoint: Checkpoint state to update
-        repo_dir: Repository directory for saving checkpoint
-        result: Export result to update
-        progress: Progress snapshot to update
-        log: Export logger
-        strict_mode: Whether to re-raise the exception
-
-    Returns:
-        True if the exception should be re-raised, False otherwise
-    """
+    """处理单篇文档导出过程中的异常。"""
     from core_modules.export.errors import ExportError, YuquePermissionError, YuqueRateLimitError
 
     is_rate_limit = isinstance(exc, YuqueRateLimitError)
@@ -177,7 +141,7 @@ def handle_export_doc_error(
     if doc_id and doc_id not in checkpoint.failed_doc_ids:
         checkpoint.failed_doc_ids.append(doc_id)
 
-    # Update checkpoint state
+    # 更新断点状态
     from core_modules.export.models import DocExportState
 
     if doc_id and doc_id not in checkpoint.doc_states:
@@ -186,17 +150,16 @@ def handle_export_doc_error(
         checkpoint.doc_states[doc_id].stage = "failed"
     save_checkpoint(repo_dir, checkpoint)
 
-    # Update result
+    # 更新导出结果汇总
     result.failed_docs += 1
     result.failed_items.append(f"{doc_title}: {exc}")
 
-    # Update progress
+    # 更新进度快照
     error_msg = f"{doc_title}: {exc}"
     recent_failed = _push_recent(progress.recent_failed, error_msg)
     waiting_preview = _advance_waiting_preview(progress.waiting_preview, doc_title)
 
-    # Note: The caller should call _emit_progress with the updated values
-    # This function just returns the updated lists
+    # 调用方后续会基于这些字段触发进度刷新。
     progress.recent_failed = recent_failed
     progress.waiting_preview = waiting_preview
     progress.processed_docs += 1
@@ -214,7 +177,7 @@ def handle_export_doc_error(
 
 
 def _push_recent(recent: list, item: str, max_size: int = 10) -> list:
-    """Add item to recent list, maintaining max size."""
+    """向最近列表追加一项，并限制最大长度。"""
     result = list(recent)
     result.append(item)
     if len(result) > max_size:
@@ -223,6 +186,6 @@ def _push_recent(recent: list, item: str, max_size: int = 10) -> list:
 
 
 def _advance_waiting_preview(preview: list, current: str) -> list:
-    """Advance waiting preview, removing current item if present."""
+    """更新等待队列预览，移除当前正在处理的项目。"""
     result = [p for p in preview if p != current]
     return result

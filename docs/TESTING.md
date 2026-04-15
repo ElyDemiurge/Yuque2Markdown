@@ -8,7 +8,7 @@
 - 测试文件命名为 `test_*.py`
 - 测试函数命名为 `test_*`
 
-推荐统一使用 pytest 运行测试，不再依赖测试文件底部的兼容入口；现有主要测试文件已移除这些手写入口。
+建议统一使用 pytest 运行测试，不再依赖测试文件底部的兼容入口；现有主要测试文件已移除这类手写入口。
 
 ## 常用命令
 
@@ -69,7 +69,7 @@ python -m pytest
 ### Lake 转换与资源本地化
 
 - `test_markdown_converter.py`
-  覆盖 `body_lake` 到 Markdown 的主要转换逻辑，是当前最核心的回归测试之一。
+  覆盖 `body_lake` 到 Markdown 的主要转换逻辑。
 - `test_localizer.py`
   覆盖资源下载、本地路径替换、内部文档链接改写等逻辑。
 
@@ -87,7 +87,7 @@ python -m pytest
 - `test_progress.py`
   覆盖进度文本裁剪、宽度计算和进度 UI 的基础行为。
 
-## 建议的回归策略
+## 建议的补测方式
 
 如果你修改了以下模块，建议至少运行对应测试：
 
@@ -104,9 +104,9 @@ python -m pytest
 - `core_modules/export/progress.py`
   运行 `testcases/test_progress.py`
 
-如果改动跨模块，建议直接运行全量测试。
+如果改动跨模块，建议直接跑全量测试。
 
-项目已提供 `testcases/conftest.py` 统一处理测试导入路径，新增测试不需要再手动写 `sys.path.insert(...)`。
+项目已通过 `testcases/conftest.py` 统一处理测试导入路径，新增测试不需要再手动写 `sys.path.insert(...)`。
 
 ## 新增测试时的约定
 
@@ -114,20 +114,20 @@ python -m pytest
 2. 文件名使用 `test_*.py`。
 3. 函数名使用 `test_*`。
 4. 优先写 pytest 风格测试，不新增额外的测试框架依赖。
-5. 新增功能或修复 bug 时，优先补回归测试，避免以后重复回归。
+5. 新增功能或修复 bug 时，优先补相关测试。
 6. 如果是 Lake 卡片或 Markdown 转换问题，优先用最小可复现输入构造测试，而不是依赖完整导出样本。
-7. 如果是导出流程问题，优先通过 `FakeClient` 之类的受控桩对象构造稳定场景，避免真实网络请求。
+7. 如果是导出流程问题，优先通过 `FakeClient` 之类的桩对象构造稳定场景，避免真实网络请求。
 
 ## 编写测试的建议
 
 - 尽量测试可观察行为，不要过度绑定内部实现细节。
 - 对路径、链接改写、日志文本这类行为，优先断言最终输出。
-- 对 Lake 转换问题，优先断言生成 Markdown 中的关键片段和 warning。
+- 对 Lake 转换问题，优先断言生成 Markdown 中的关键片段和警告内容。
 - 对配置校验问题，优先断言错误消息和边界输入是否被接受。
 
 ## 与维护脚本的关系
 
-`regenerate_md.py` 主要用于在 Lake 转换逻辑更新后，对 `output/` 中已有导出结果批量重新生成 Markdown。它不是测试脚本，但在某些修复场景下可以作为人工验证补充：
+`regenerate_md.py` 主要用于在 Lake 转换逻辑更新后，根据 `output/` 中已有的 `.lake` 文件重新写出 Markdown 文件。它不是测试脚本，但可作为人工验证补充：
 
 1. 先运行对应的转换测试。
 2. 再执行 `python regenerate_md.py`。
@@ -136,5 +136,5 @@ python -m pytest
 ## 相关文档
 
 - [../README.md](../README.md)：项目总览与常用入口
-- [ARCHITECTURE.md](ARCHITECTURE.md)：模块职责与关键数据流
+- [ARCHITECTURE.md](ARCHITECTURE.md)：模块职责与主要执行顺序
 - [TROUBLESHOOTING.md](TROUBLESHOOTING.md)：测试失败或导出异常时的排查方法

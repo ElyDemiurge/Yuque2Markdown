@@ -1,4 +1,4 @@
-"""Tests for console menu utilities."""
+"""控制台菜单工具测试。"""
 import sys
 sys.path.insert(0, ".")
 

@@ -111,7 +111,7 @@ def validate_export_defaults(defaults: ExportDefaultsConfig) -> list[ValidationE
     if defaults.request_max_retries < MIN_RETRIES or defaults.request_max_retries > MAX_RETRIES:
         errors.append(ValidationError("request_max_retries", f"重试次数必须在 {MIN_RETRIES} - {MAX_RETRIES} 之间"))
 
-    # 校验退避时间相关配置
+    # 校验各类等待时间配置
     if defaults.rate_limit_backoff_seconds < MIN_BACKOFF or defaults.rate_limit_backoff_seconds > MAX_RATE_LIMIT_BACKOFF:
         errors.append(ValidationError("rate_limit_backoff_seconds", f"限流等待必须在 {MIN_BACKOFF} - {MAX_RATE_LIMIT_BACKOFF} 秒之间"))
 
@@ -121,11 +121,11 @@ def validate_export_defaults(defaults: ExportDefaultsConfig) -> list[ValidationE
     if defaults.max_backoff_seconds < MIN_MAX_BACKOFF or defaults.max_backoff_seconds > MAX_MAX_BACKOFF:
         errors.append(ValidationError("max_backoff_seconds", f"最大等待必须在 {MIN_MAX_BACKOFF} - {MAX_MAX_BACKOFF} 秒之间"))
 
-    # 跨字段校验：max_backoff 应 >= 各单项退避值
+    # 跨字段校验：max_backoff 应 >= 各单项等待时间
     if defaults.max_backoff_seconds < defaults.rate_limit_backoff_seconds:
-        errors.append(ValidationError("max_backoff_seconds", "最大等待时间应 >= 限流初始等待时间"))
+        errors.append(ValidationError("max_backoff_seconds", "单次重试等待上限应 >= 触发限流后的首次等待时间"))
     if defaults.max_backoff_seconds < defaults.network_backoff_seconds:
-        errors.append(ValidationError("max_backoff_seconds", "最大等待时间应 >= 网络错误初始等待时间"))
+        errors.append(ValidationError("max_backoff_seconds", "单次重试等待上限应 >= 网络错误后的首次等待时间"))
 
     # 校验最大文档数
     if defaults.max_docs is not None:
