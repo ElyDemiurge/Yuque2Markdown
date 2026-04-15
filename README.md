@@ -6,8 +6,8 @@
 
 ## 作者
 
-- Cyberangel：项目作者与主要维护者
-- OpenAI Codex、Claude Code：协作整理、重构与测试补强
+- Cyberangel：项目作者（纯 Vibe Coding 编程）
+- OpenAI Codex、Claude Code：编写代码、协作整理、重构与测试补强
 
 ## 功能特性
 
