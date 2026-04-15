@@ -103,6 +103,7 @@ def test_localize_assets_replaces_markdown_url():
     assert "example.com" not in result.markdown
     assert result.resources[0].local_path is not None
     assert result.resources[0].local_path.startswith("./assets/")
+    assert result.warnings == []
 
 
 def test_localize_assets_warns_on_failure():
@@ -161,6 +162,122 @@ def test_localize_assets_preserves_non_asset_resources():
 
     # link 不应被下载，markdown 保持不变
     assert "example.com/page" in result.markdown
+
+
+def test_localize_attachment_keeps_link_and_warns_when_selected_suffix():
+    render = MarkdownRenderResult(
+        markdown="[附件](https://www.yuque.com/attachments/yuque/0/2022/pdf/demo.pdf)",
+        resources=[
+            ResourceRef(
+                original_url="https://www.yuque.com/attachments/yuque/0/2022/pdf/demo.pdf",
+                normalized_url="https://www.yuque.com/attachments/yuque/0/2022/pdf/demo.pdf",
+                kind="attachment",
+                source_format="lake",
+                title="demo.pdf",
+            )
+        ],
+    )
+
+    def fake_fetch(url):
+        raise AssertionError("attachment download should stay disabled")
+
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        assets_dir = Path(d) / "assets"
+        result = localize_markdown_assets(
+            render,
+            assets_dir=assets_dir,
+            fetch_binary=fake_fetch,
+            attachment_suffixes=[".pdf"],
+        )
+
+    assert "https://www.yuque.com/attachments/yuque/0/2022/pdf/demo.pdf" in result.markdown
+    assert result.resources[0].local_path is None
+    assert any("暂不支持下载" in warning for warning in result.warnings)
+
+
+def test_localize_attachment_keeps_unselected_suffix():
+    render = MarkdownRenderResult(
+        markdown="[附件](https://www.yuque.com/attachments/yuque/0/2022/docx/demo.docx)",
+        resources=[
+            ResourceRef(
+                original_url="https://www.yuque.com/attachments/yuque/0/2022/docx/demo.docx",
+                normalized_url="https://www.yuque.com/attachments/yuque/0/2022/docx/demo.docx",
+                kind="attachment",
+                source_format="lake",
+                title="demo.docx",
+            )
+        ],
+    )
+
+    def fake_fetch(url):
+        raise AssertionError("should not fetch unselected attachment type")
+
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        assets_dir = Path(d) / "assets"
+        result = localize_markdown_assets(
+            render,
+            assets_dir=assets_dir,
+            fetch_binary=fake_fetch,
+            attachment_suffixes=[".pdf"],
+        )
+
+    assert "demo.docx" in result.markdown
+    assert result.resources[0].local_path is None
+    assert any("暂不支持下载" in warning for warning in result.warnings)
+
+
+def test_localize_images_still_download_when_attachment_suffixes_empty():
+    render = MarkdownRenderResult(
+        markdown="![图](https://example.com/a.png)\n\n[附件](https://www.yuque.com/attachments/yuque/0/2022/zip/demo.zip)",
+        resources=[
+            ResourceRef(
+                original_url="https://example.com/a.png",
+                normalized_url="https://example.com/a.png",
+                kind="image",
+                source_format="lake",
+            ),
+            ResourceRef(
+                original_url="https://www.yuque.com/attachments/yuque/0/2022/zip/demo.zip",
+                normalized_url="https://www.yuque.com/attachments/yuque/0/2022/zip/demo.zip",
+                kind="attachment",
+                source_format="lake",
+                title="demo.zip",
+            ),
+        ],
+    )
+
+    fetched: list[str] = []
+
+    def fake_fetch(url):
+        fetched.append(url)
+        return b"bytes"
+
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        assets_dir = Path(d) / "assets"
+        result = localize_markdown_assets(
+            render,
+            assets_dir=assets_dir,
+            fetch_binary=fake_fetch,
+            attachment_suffixes=[],
+        )
+
+    assert fetched == ["https://example.com/a.png"]
+    assert result.resources[0].local_path is not None
+    assert result.resources[1].local_path is None
+
+
+def test_yuque_attachment_url_not_classified_as_doc():
+    render = MarkdownRenderResult(
+        markdown="[附件](https://www.yuque.com/attachments/yuque/0/2022/pdf/demo.pdf)",
+        resources=[],
+    )
+    from core_modules.lake.resource_parser import collect_resources
+
+    resources = collect_resources(render.markdown, "lake")
+    assert resources[0].kind == "attachment"
 
 
 def test_rewrite_doc_links_finds_target():
@@ -255,22 +372,3 @@ def test_replace_url_backward_compat():
     md = "![图](https://example.com/pic.png)"
     result = replace_url(md, "https://example.com/pic.png", "./assets/pic.png")
     assert result == "![图](./assets/pic.png)"
-
-
-if __name__ == "__main__":
-    import traceback
-    tests = [obj for name, obj in globals().items() if name.startswith("test_") and callable(obj)]
-    passed = failed = 0
-    for test in tests:
-        try:
-            test()
-            print(f"  PASS: {test.__name__}")
-            passed += 1
-        except AssertionError as e:
-            print(f"  FAIL: {test.__name__}: {e}")
-            failed += 1
-        except Exception as e:
-            print(f"  ERROR: {test.__name__}: {e}")
-            traceback.print_exc()
-            failed += 1
-    print(f"\nResults: {passed} passed, {failed} failed")

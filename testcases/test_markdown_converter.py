@@ -97,8 +97,7 @@ def test_lake_heading_levels_increment():
     assert "#### 三级" in content
     assert "##### 四级" in content
     assert "###### 五级" in content
-    assert "###### 六级" in content  # h6→h7 超出 Markdown 最大层级，保持 h6
-    # h6 递增为 h7 时应输出警告
+    assert "- 六级" in content
     assert any("超出 H6" in w and "六级" in w for w in result.warnings)
 
 
@@ -318,6 +317,24 @@ def test_lake_video_card():
     assert not any("未支持 card 类型" in w and "video" in w for w in result.warnings)
 
 
+def test_lake_math_card():
+    """math card 应渲染为 Markdown 公式。"""
+    body_lake = '<card type="inline" name="math" value="data:%7B%22code%22%3A%22log_%7B2%7Dx%22%2C%22src%22%3A%22https%3A%2F%2Fexample.com%2Fmath.svg%22%7D"/>'
+    result = render_doc_markdown({"title": "测试", "format": "lake", "body_lake": body_lake})
+    assert "$log_{2}x$" in result.markdown
+    assert not any("未支持 card 类型" in w and "math" in w for w in result.warnings)
+
+
+def test_lake_board_card():
+    """board card 应至少降级为可读列表，不再产生未支持警告。"""
+    body_lake = '<card type="block" name="board" value="data:%7B%22diagramData%22%3A%7B%22body%22%3A%5B%7B%22html%22%3A%22Root%22%2C%22children%22%3A%5B%7B%22html%22%3A%22Child%201%22%2C%22children%22%3A%5B%5D%7D%2C%7B%22html%22%3A%22Child%202%22%2C%22children%22%3A%5B%5D%7D%5D%7D%5D%7D%2C%22src%22%3A%22https%3A%2F%2Fexample.com%2Fboard.jpeg%22%7D"/>'
+    result = render_doc_markdown({"title": "测试", "format": "lake", "body_lake": body_lake})
+    assert "- Root" in result.markdown
+    assert "  - Child 1" in result.markdown
+    assert "![board](https://example.com/board.jpeg)" in result.markdown
+    assert not any("未支持 card 类型" in w and "board" in w for w in result.warnings)
+
+
 def test_lake_mention_card():
     """mention card 应渲染为 @用户名"""
     body_lake = '<card type="inline" name="mention" data-login="de8ug" data-name="de8ug" value="data:%7B%22login%22%3A%22de8ug%22%7D"/>'
@@ -332,6 +349,14 @@ def test_lake_bookmarklink_card():
     result = render_doc_markdown({"title": "测试", "format": "lake", "body_lake": body_lake})
     assert "[Example](https://example.com/page)" in result.markdown
     assert not any("未支持 card 类型" in w for w in result.warnings)
+
+
+def test_lake_bookmarkinline_card():
+    """bookmarkinline card 应渲染为链接"""
+    body_lake = '<card type="inline" name="bookmarkinline" value="data:%7B%22url%22%3A%22https%3A%2F%2Fexample.com%2Fpage%22%2C%22title%22%3A%22Inline Example%22%7D"/>'
+    result = render_doc_markdown({"title": "测试", "format": "lake", "body_lake": body_lake})
+    assert "[Inline Example](https://example.com/page)" in result.markdown
+    assert not any("未支持 card 类型" in w and "bookmarkinline" in w for w in result.warnings)
 
 
 def test_lake_lockedtext_card():
@@ -372,34 +397,9 @@ def test_external_urls_not_downloaded():
     assert "attachment" not in kinds
 
 
-if __name__ == "__main__":
-    import inspect
-
-    tests = [
-        obj
-        for name, obj in globals().items()
-        if name.startswith("test_") and callable(obj)
-    ]
-
-    passed = 0
-    failed = 0
-    for test in tests:
-        try:
-            test()
-            print(f"  PASS: {test.__name__}")
-            passed += 1
-        except AssertionError as e:
-            print(f"  FAIL: {test.__name__}: {e}")
-            failed += 1
-        except Exception as e:
-            print(f"  ERROR: {test.__name__}: {e}")
-            failed += 1
-
-    print(f"\nResults: {passed} passed, {failed} failed")
-    if failed:
-        print("Failed tests:")
-        for test in tests:
-            try:
-                test()
-            except Exception:
-                print(f"  - {test.__name__}")
+def test_lake_strips_invalid_xml_control_chars():
+    """lake 中混入的 XML 非法控制字符不应导致整个文档解析失败。"""
+    body_lake = "<p>sym\x02bolic execution</p>"
+    result = render_doc_markdown({"title": "测试", "format": "lake", "body_lake": body_lake})
+    assert "symbolic execution" in result.markdown
+    assert not any("解析失败" in w for w in result.warnings)

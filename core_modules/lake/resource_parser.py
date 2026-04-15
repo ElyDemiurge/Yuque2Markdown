@@ -62,10 +62,10 @@ def collect_resources(markdown: str, source_format: str, base_url: str | None = 
 
     for match in _MARKDOWN_LINK_PATTERN.finditer(markdown):
         url = match.group("url")
-        if is_yuque_doc_url(url):
-            kind = "doc"
-        elif is_attachment_url(url):
+        if is_attachment_url(url):
             kind = "attachment"
+        elif is_yuque_doc_url(url):
+            kind = "doc"
         else:
             kind = "link"
         add(url, kind, alt_text=match.group("text") or None, title=match.group("title") or None)
@@ -75,10 +75,10 @@ def collect_resources(markdown: str, source_format: str, base_url: str | None = 
         url = match.group("url")
         if attr == "src":
             kind = "image" if is_image_url(url) else "attachment"
-        elif is_yuque_doc_url(url):
-            kind = "doc"
         elif is_attachment_url(url):
             kind = "attachment"
+        elif is_yuque_doc_url(url):
+            kind = "doc"
         else:
             kind = "link"
         add(url, kind)
@@ -86,10 +86,10 @@ def collect_resources(markdown: str, source_format: str, base_url: str | None = 
     if source_format == "lake":
         for match in _URL_PATTERN.finditer(markdown):
             url = match.group(0)
-            if is_yuque_doc_url(url):
-                kind = "doc"
-            elif is_attachment_url(url):
+            if is_attachment_url(url):
                 kind = "attachment"
+            elif is_yuque_doc_url(url):
+                kind = "doc"
             else:
                 kind = "link"
             add(url, kind)
@@ -117,11 +117,13 @@ def is_image_url(url: str) -> bool:
 
 
 def is_attachment_url(url: str) -> bool:
-    """判断是否为语雀 CDN 上的附件 URL，应下载到本地。
+    """判断是否为语雀 CDN 上的附件 URL。
 
     仅匹配附件上传路径（/attachments/、含 /2022/pdf/ 等时间戳路径）或明确的
     CDN 域名（www.nlark.com/yuque/、yuqueusercontent.com、aliyuncs.com），
     不匹配普通语雀文档页面链接。
+
+    这里的职责只是“识别附件链接”，并不代表当前版本一定会将其下载到本地。
     """
     parsed = urlparse(url.strip())
     host = parsed.netloc.lower()

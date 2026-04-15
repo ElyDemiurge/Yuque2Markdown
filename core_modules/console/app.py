@@ -8,7 +8,9 @@ from core_modules.config.store import load_config
 from core_modules.console.helpers import parse_action
 from core_modules.console.menu import MenuItem, run_menu, show_message
 from core_modules.export.cli import build_client
+from core_modules.export.cli import list_accessible_repos
 from core_modules.export.errors import YuqueRateLimitError
+from core_modules.version import APP_VERSION
 
 
 MAIN_MENU_KEY = "main"
@@ -230,7 +232,8 @@ def _persist_config(config: AppConfig, session: SessionState, reason: str) -> Ap
 
 
 def _build_main_title(session: SessionState) -> str:
-    return "Yuque2Markdown 控制台 [未保存]" if session.dirty else "Yuque2Markdown 控制台"
+    base = f"Yuque2Markdown {APP_VERSION} 控制台"
+    return f"{base} [未保存]" if session.dirty else base
 
 
 def _build_main_menu_items(config: AppConfig, session: SessionState, rate_limit_summary: str) -> list[MenuItem]:
@@ -369,7 +372,7 @@ def _parse_non_negative_float(value: str | None) -> float | None:
     try:
         parsed = float(value)
     except ValueError:
-        show_message("输入无效", ["请求间隔必须是数字，例如 0.2 或 1。"])
+        show_message("输入无效", ["请求间隔必须是数字，例如 0.1 或 1。"])
         return None
     if parsed < 0:
         show_message("输入无效", ["请求间隔不能小于 0。"])

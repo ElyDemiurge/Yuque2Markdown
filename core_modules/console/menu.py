@@ -4,7 +4,15 @@ import curses
 import threading
 import time
 import unicodedata
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+
+
+@dataclass(slots=True)
+class InlineChoice:
+    """单个菜单行内的可切换选项。"""
+    key: str
+    label: str
+    checked: bool = False
 
 
 @dataclass(slots=True)
@@ -18,9 +26,11 @@ class MenuItem:
     input_style: bool = False
     edit_value: str | None = None  # 编辑时的初始值，None 时使用 value
     indent: int = 0  # 缩进级别，每个级别 4 个空格
+    inline_choices: list[InlineChoice] = field(default_factory=list)
+    inline_selected_index: int = 0
 
 
-DEFAULT_HELP_LINES = ["↑↓ 移动 | Enter 确认/编辑 | Space 切换 | s 手动保存配置 | q 返回"]
+DEFAULT_HELP_LINES = ["↑↓ 移动 | ←→ 选择行内项 | Enter 确认/编辑 | Space 切换 | s 手动保存配置 | q 返回"]
 EDIT_HELP_LINES = ["Enter 确认 | Esc 取消 | ↑↓ 放弃编辑 | ←→ 移动 | Backspace/Delete 删除"]
 TEXT_HELP_LINES = ["输入内容后 Enter 确认 | Esc 取消 | ←→ 移动 | Backspace/Delete 删除"]
 CONFIRM_HELP_LINES = ["↑↓ 移动 | Enter 确认 | q 取消"]
@@ -81,32 +91,21 @@ def run_menu(
             if refresh_state is not None:
                 transient_lines = refresh_state.lines
             height, width = stdscr.getmaxyx()
-            if editing_index is not None:
-                help_text = help_lines or EDIT_HELP_LINES
-            else:
-                help_text = help_lines or DEFAULT_HELP_LINES
-            content_width, left, top, divider_row = _layout_frame(height, width, help_text, len(items), transient_lines, lines)
-            stdscr.addnstr(top, max(0, (width - min(_display_width(title), content_width)) // 2), title, min(content_width, width), curses.A_BOLD)
-            for offset, line in enumerate(help_text, start=1):
-                row = top + offset
-                if row >= height:
-                    break
-                centered_line = _truncate(line, content_width)
-                line_x = max(0, (width - _display_width(centered_line)) // 2)
-                stdscr.addnstr(row, line_x, centered_line, min(content_width, width - line_x), curses.A_BOLD)
-            if divider_row < height:
-                stdscr.addnstr(divider_row, left, "─" * max(0, content_width), content_width)
-            row = divider_row + 1
-            if transient_lines:
-                for line in transient_lines:
-                    if row >= height:
-                        break
-                    stdscr.addnstr(row, left + 2, _truncate(line, max(0, content_width - 2)), max(0, content_width - 2), curses.A_DIM)
-                    row += 1
-                if row < height:
-                    row += 1
-            edit_cursor_pos, menu_end_row = _render_menu_items(stdscr, items, index, row, left, content_width, height, editing_index, edit_chars, edit_cursor)
-            _render_status_lines(stdscr, lines, menu_end_row, left, content_width, height)
+            help_text = _menu_help_lines(help_lines, editing_index is not None)
+            edit_cursor_pos = _render_menu_frame(
+                stdscr,
+                title=title,
+                items=items,
+                lines=lines,
+                help_text=help_text,
+                transient_lines=transient_lines,
+                index=index,
+                editing_index=editing_index,
+                edit_chars=edit_chars,
+                edit_cursor=edit_cursor,
+                height=height,
+                width=width,
+            )
             if editing_index is not None:
                 curses.curs_set(2)  # 块状光标更明显
                 stdscr.move(edit_cursor_pos[0], edit_cursor_pos[1])
@@ -120,76 +119,174 @@ def run_menu(
                     return "__refresh_done__"
                 continue
             if editing_index is not None:
-                if key in ("\n", "\r"):
-                    result = "".join(edit_chars).strip()
-                    item_key = items[editing_index].key
-                    editing_index = None
-                    edit_chars = []
-                    edit_cursor = 0
+                action, editing_index, edit_chars, edit_cursor, index = _handle_editing_key(
+                    key=key,
+                    items=items,
+                    editing_index=editing_index,
+                    edit_chars=edit_chars,
+                    edit_cursor=edit_cursor,
+                    index=index,
+                )
+                if action is not None:
                     curses.curs_set(0)
-                    return f"{item_key}:{result}"
-                if key == "\x1b":
-                    editing_index = None
-                    edit_chars = []
-                    edit_cursor = 0
-                    curses.curs_set(0)
-                    continue
-                if key in (curses.KEY_BACKSPACE, "\b", "\x7f"):
-                    if edit_cursor > 0:
-                        del edit_chars[edit_cursor - 1]
-                        edit_cursor -= 1
-                    continue
-                if key == curses.KEY_DC:
-                    if edit_cursor < len(edit_chars):
-                        del edit_chars[edit_cursor]
-                    continue
-                if key == curses.KEY_LEFT:
-                    edit_cursor = max(0, edit_cursor - 1)
-                    continue
-                if key == curses.KEY_RIGHT:
-                    edit_cursor = min(len(edit_chars), edit_cursor + 1)
-                    continue
-                if key == curses.KEY_UP:
-                    editing_index = None
-                    edit_chars = []
-                    edit_cursor = 0
-                    curses.curs_set(0)
-                    index = _move_focus(items, index, -1)
-                    continue
-                if key == curses.KEY_DOWN:
-                    editing_index = None
-                    edit_chars = []
-                    edit_cursor = 0
-                    curses.curs_set(0)
-                    index = _move_focus(items, index, 1)
-                    continue
-                if isinstance(key, str) and key.isprintable():
-                    edit_chars.insert(edit_cursor, key)
-                    edit_cursor += 1
+                    return action
                 continue
-            if key == curses.KEY_UP:
-                index = _move_focus(items, index, -1)
-            elif key == curses.KEY_DOWN:
-                index = _move_focus(items, index, 1)
-            elif key in (10, 13):
-                if 0 <= index < len(items) and items[index].focusable:
-                    item = items[index]
-                    if item.input_style:
-                        editing_index = index
-                        initial = item.edit_value if item.edit_value is not None else item.value
-                        edit_chars = list(initial)
-                        edit_cursor = len(edit_chars)
-                        curses.curs_set(1)
-                        continue
-                    return item.key
-            elif key == ord("q"):
-                return None
-            elif key == ord("s"):
-                return "save"
-            elif key == ord(" ") and 0 <= index < len(items) and items[index].item_type == "bool":
-                return items[index].key
+            action, index, editing_index, edit_chars, edit_cursor = _handle_menu_key(
+                key=key,
+                items=items,
+                index=index,
+            )
+            if editing_index is not None:
+                curses.curs_set(1)
+                continue
+            if action is not None:
+                if action == "__exit__":
+                    return None
+                return action
 
     return curses.wrapper(_render)
+
+
+def _menu_help_lines(help_lines: list[str] | None, editing: bool) -> list[str]:
+    if help_lines is not None:
+        return help_lines
+    return EDIT_HELP_LINES if editing else DEFAULT_HELP_LINES
+
+
+def _render_menu_frame(
+    stdscr,
+    *,
+    title: str,
+    items: list[MenuItem],
+    lines: list[str],
+    help_text: list[str],
+    transient_lines: list[str] | None,
+    index: int,
+    editing_index: int | None,
+    edit_chars: list[str],
+    edit_cursor: int,
+    height: int,
+    width: int,
+) -> tuple[int, int]:
+    content_width, left, top, divider_row = _layout_frame(height, width, help_text, len(items), transient_lines, lines)
+    _render_menu_header(stdscr, title=title, help_text=help_text, top=top, width=width, content_width=content_width)
+    if divider_row < height:
+        stdscr.addnstr(divider_row, left, "─" * max(0, content_width), content_width)
+    row = divider_row + 1
+    row = _render_transient_lines(stdscr, transient_lines=transient_lines, row=row, left=left, content_width=content_width, height=height)
+    edit_cursor_pos, menu_end_row = _render_menu_items(
+        stdscr,
+        items,
+        index,
+        row,
+        left,
+        content_width,
+        height,
+        editing_index,
+        edit_chars,
+        edit_cursor,
+    )
+    _render_status_lines(stdscr, lines, menu_end_row, left, content_width, height)
+    return edit_cursor_pos
+
+
+def _render_menu_header(stdscr, *, title: str, help_text: list[str], top: int, width: int, content_width: int) -> None:
+    stdscr.addnstr(top, max(0, (width - min(_display_width(title), content_width)) // 2), title, min(content_width, width), curses.A_BOLD)
+    for offset, line in enumerate(help_text, start=1):
+        row = top + offset
+        centered_line = _truncate(line, content_width)
+        line_x = max(0, (width - _display_width(centered_line)) // 2)
+        stdscr.addnstr(row, line_x, centered_line, min(content_width, width - line_x), curses.A_BOLD)
+
+
+def _render_framed_header(stdscr, *, title: str, help_text: list[str], width: int, content_width: int, top: int, left: int, height: int) -> int:
+    _render_menu_header(stdscr, title=title, help_text=help_text, top=top, width=width, content_width=content_width)
+    divider_row = top + len(help_text) + 1
+    if divider_row < height:
+        stdscr.addnstr(divider_row, left, "─" * max(0, content_width), content_width)
+    return divider_row
+
+
+def _render_transient_lines(stdscr, *, transient_lines: list[str] | None, row: int, left: int, content_width: int, height: int) -> int:
+    if not transient_lines:
+        return row
+    for line in transient_lines:
+        if row >= height:
+            break
+        stdscr.addnstr(row, left + 2, _truncate(line, max(0, content_width - 2)), max(0, content_width - 2), curses.A_DIM)
+        row += 1
+    if row < height:
+        row += 1
+    return row
+
+
+def _handle_editing_key(*, key, items: list[MenuItem], editing_index: int, edit_chars: list[str], edit_cursor: int, index: int) -> tuple[str | None, int | None, list[str], int, int]:
+    if key in ("\n", "\r"):
+        result = "".join(edit_chars).strip()
+        item_key = items[editing_index].key
+        return f"{item_key}:{result}", None, [], 0, index
+    if key == "\x1b":
+        return None, None, [], 0, index
+    if key in (curses.KEY_BACKSPACE, "\b", "\x7f"):
+        if edit_cursor > 0:
+            del edit_chars[edit_cursor - 1]
+            edit_cursor -= 1
+        return None, editing_index, edit_chars, edit_cursor, index
+    if key == curses.KEY_DC:
+        if edit_cursor < len(edit_chars):
+            del edit_chars[edit_cursor]
+        return None, editing_index, edit_chars, edit_cursor, index
+    if key == curses.KEY_LEFT:
+        return None, editing_index, edit_chars, max(0, edit_cursor - 1), index
+    if key == curses.KEY_RIGHT:
+        return None, editing_index, edit_chars, min(len(edit_chars), edit_cursor + 1), index
+    if key == curses.KEY_UP:
+        return None, None, [], 0, _move_focus(items, index, -1)
+    if key == curses.KEY_DOWN:
+        return None, None, [], 0, _move_focus(items, index, 1)
+    if isinstance(key, str) and key.isprintable():
+        edit_chars.insert(edit_cursor, key)
+        edit_cursor += 1
+    return None, editing_index, edit_chars, edit_cursor, index
+
+
+def _handle_menu_key(*, key, items: list[MenuItem], index: int) -> tuple[str | None, int, int | None, list[str], int]:
+    if key == curses.KEY_UP:
+        return None, _move_focus(items, index, -1), None, [], 0
+    if key == curses.KEY_DOWN:
+        return None, _move_focus(items, index, 1), None, [], 0
+    if key == curses.KEY_LEFT and 0 <= index < len(items) and items[index].inline_choices:
+        items[index].inline_selected_index = max(0, items[index].inline_selected_index - 1)
+        return None, index, None, [], 0
+    if key == curses.KEY_RIGHT and 0 <= index < len(items) and items[index].inline_choices:
+        items[index].inline_selected_index = min(
+            len(items[index].inline_choices) - 1,
+            items[index].inline_selected_index + 1,
+        )
+        return None, index, None, [], 0
+    if key in (10, 13):
+        if 0 <= index < len(items) and items[index].focusable:
+            item = items[index]
+            if item.inline_choices:
+                selected_index = max(0, min(item.inline_selected_index, len(item.inline_choices) - 1))
+                return item.inline_choices[selected_index].key, index, None, [], 0
+            if item.input_style:
+                initial = item.edit_value if item.edit_value is not None else item.value
+                return None, index, index, list(initial), len(initial)
+            return item.key, index, None, [], 0
+        return None, index, None, [], 0
+    if key == ord("q"):
+        return "__exit__", index, None, [], 0
+    if key == ord("s"):
+        return "save", index, None, [], 0
+    if key == ord(" ") and 0 <= index < len(items):
+        item = items[index]
+        if item.inline_choices:
+            selected_index = max(0, min(item.inline_selected_index, len(item.inline_choices) - 1))
+            return item.inline_choices[selected_index].key, index, None, [], 0
+        if item.item_type in {"bool", "check"}:
+            return item.key, index, None, [], 0
+    return None, index, None, [], 0
 
 
 def prompt_text(label: str, initial: str = "", help_lines: list[str] | None = None) -> str | None:
@@ -258,17 +355,16 @@ def run_confirmation(
             height, width = stdscr.getmaxyx()
             help_text = help_lines or CONFIRM_HELP_LINES
             content_width, left, top, _ = _layout_frame(height, width, help_text, len(items) + len(lines) + 1, None, [])
-            stdscr.addnstr(top, max(0, (width - min(_display_width(title), content_width)) // 2), title, min(content_width, width), curses.A_BOLD)
-            for row_offset, line in enumerate(help_text, start=1):
-                row = top + row_offset
-                if row >= height:
-                    break
-                centered_line = _truncate(line, content_width)
-                line_x = max(0, (width - _display_width(centered_line)) // 2)
-                stdscr.addnstr(row, line_x, centered_line, min(content_width, width - line_x), curses.A_BOLD)
-            divider_row = top + len(help_text) + 1
-            if divider_row < height:
-                stdscr.addnstr(divider_row, left, "─" * max(0, content_width), content_width)
+            divider_row = _render_framed_header(
+                stdscr,
+                title=title,
+                help_text=help_text,
+                width=width,
+                content_width=content_width,
+                top=top,
+                left=left,
+                height=height,
+            )
             row = divider_row + 1
             for line in lines:
                 if row >= height - 4:
@@ -327,16 +423,16 @@ def run_select_list(
             filtered = _apply_filter(lines, current_filter)
             help_text = help_lines or SELECT_HELP_LINES
             content_width, left, top, divider_row = _layout_frame(height, width, help_text, len(filtered) + 2, None, [])
-            stdscr.addnstr(top, max(0, (width - min(_display_width(title), content_width)) // 2), title, min(content_width, width), curses.A_BOLD)
-            for row_offset, line in enumerate(help_text, start=1):
-                row = top + row_offset
-                if row >= height:
-                    break
-                centered_line = _truncate(line, content_width)
-                line_x = max(0, (width - _display_width(centered_line)) // 2)
-                stdscr.addnstr(row, line_x, centered_line, min(content_width, width - line_x), curses.A_BOLD)
-            if divider_row < height:
-                stdscr.addnstr(divider_row, left, "─" * max(0, content_width), content_width)
+            divider_row = _render_framed_header(
+                stdscr,
+                title=title,
+                help_text=help_text,
+                width=width,
+                content_width=content_width,
+                top=top,
+                left=left,
+                height=height,
+            )
             row = divider_row + 1
             if in_filter_mode:
                 prompt = f"过滤 [{current_filter}]" if current_filter else "过滤 []"
@@ -458,17 +554,17 @@ def show_message(title: str, lines: list[str], help_lines: list[str] | None = No
             stdscr.clear()
             height, width = stdscr.getmaxyx()
             help_text = help_lines or MESSAGE_HELP_LINES
-            content_width, left, top, divider_row = _layout_frame(height, width, help_text, len(lines), None, [])
-            stdscr.addnstr(top, max(0, (width - min(_display_width(title), content_width)) // 2), title, min(content_width, width), curses.A_BOLD)
-            for row_offset, line in enumerate(help_text, start=1):
-                row = top + row_offset
-                if row >= height:
-                    break
-                centered_line = _truncate(line, content_width)
-                line_x = max(0, (width - _display_width(centered_line)) // 2)
-                stdscr.addnstr(row, line_x, centered_line, min(content_width, width - line_x), curses.A_BOLD)
-            if divider_row < height:
-                stdscr.addnstr(divider_row, left, "─" * max(0, content_width), content_width)
+            content_width, left, top, _ = _layout_frame(height, width, help_text, len(lines), None, [])
+            divider_row = _render_framed_header(
+                stdscr,
+                title=title,
+                help_text=help_text,
+                width=width,
+                content_width=content_width,
+                top=top,
+                left=left,
+                height=height,
+            )
             row = divider_row + 1
             for line in lines:
                 if row >= height:
@@ -526,7 +622,7 @@ def run_waiting_message(title: str, lines: list[str], worker) -> object:
 def _render_menu_items(stdscr, items: list[MenuItem], index: int, start_row: int, left: int, content_width: int, height: int, editing_index: int | None = None, edit_chars: list[str] | None = None, edit_cursor: int = 0) -> tuple[tuple[int, int], int]:
     row = start_row
     cursor_pos = (row, left)
-    indent_prefix = "  "  # 2 个空格缩进
+    indent_prefix = "    "  # 4 个空格缩进
     for item_index, item in enumerate(items):
         if row >= height:
             break
@@ -536,6 +632,7 @@ def _render_menu_items(stdscr, items: list[MenuItem], index: int, start_row: int
         title_indent = indent_prefix * item.indent
         marker = {
             "bool": "[*]" if item.value.strip() == "开启" else "[ ]",
+            "check": "[*]" if item.value.strip() == "开启" else "[ ]",
             "readonly": "   ",
             "submenu": "[>]",
             "section": "   ",
@@ -553,21 +650,37 @@ def _render_menu_items(stdscr, items: list[MenuItem], index: int, start_row: int
         prefix = ">" if selected else " "
         value_text = item.value.strip()
         attrs = curses.A_REVERSE if selected and not is_editing else 0
-        display_title = title_indent + item.title
+        display_title = item.title
         if item.input_style:
-            dots = "·" * max(2, 18 - min(_display_width(display_title), 16))
-            if is_editing and edit_chars is not None:
-                edit_text = "".join(edit_chars)
-                label_prefix = f"{prefix} {display_title} {dots} "
-                stdscr.addnstr(row, left, _truncate(label_prefix, content_width), content_width, curses.A_REVERSE)
-                edit_start_x = left + _display_width(label_prefix)
-                edit_width = content_width - _display_width(label_prefix)
-                stdscr.addnstr(row, edit_start_x, _truncate(edit_text, edit_width), edit_width, curses.A_UNDERLINE)
-                cursor_display_pos = _display_width("".join(edit_chars[:edit_cursor]))
-                cursor_pos = (row, edit_start_x + min(cursor_display_pos, edit_width))
-            else:
-                label = f"{prefix} {display_title} {dots} {value_text}" if value_text else f"{prefix} {display_title}"
-                stdscr.addnstr(row, left, _truncate(label, content_width), content_width, attrs)
+            cursor_pos = _render_input_menu_item(
+                stdscr,
+                item=item,
+                row=row,
+                left=left,
+                content_width=content_width,
+                prefix=prefix,
+                marker=marker,
+                title_indent=title_indent,
+                value_text=value_text,
+                attrs=attrs,
+                is_editing=is_editing,
+                edit_chars=edit_chars,
+                edit_cursor=edit_cursor,
+            )
+            row += 1
+            continue
+        elif item.inline_choices:
+            cursor_pos = _render_inline_choice_menu_item(
+                stdscr,
+                item=item,
+                row=row,
+                left=left,
+                content_width=content_width,
+                prefix=prefix,
+                title_indent=title_indent,
+                attrs=attrs,
+                selected=selected,
+            )
             row += 1
             continue
         elif item.item_type == "submenu":
@@ -575,51 +688,132 @@ def _render_menu_items(stdscr, items: list[MenuItem], index: int, start_row: int
             detail = value_text or ""
             label = f"{prefix} {display_title} {dots} {detail} ›" if detail else f"{prefix} {display_title} {dots} ›"
         else:
-            marker_str = marker.strip()
-            if marker_str:
-                label = f"{prefix} {marker} {display_title}"
-            else:
-                label = f"{prefix} {display_title}"
-            if value_text:
-                label = f"{label}: {value_text}"
+            label = _build_basic_menu_label(
+                prefix=prefix,
+                marker=marker,
+                title_indent=title_indent,
+                display_title=display_title,
+                value_text=value_text,
+                item_type=item.item_type,
+            )
         if item.item_type == "readonly":
-            color_attrs = curses.A_DIM | attrs
-            if "限流" in value_text or "429" in value_text or "限流" in item.title:
-                color_attrs = curses.A_BOLD | attrs
-                if curses.has_colors():
-                    try:
-                        curses.start_color()
-                        curses.use_default_colors()
-                        curses.init_pair(2, curses.COLOR_YELLOW, -1)
-                        color_attrs |= curses.color_pair(2)
-                    except curses.error:
-                        pass
-            elif "失败" in value_text or "失败" in item.title:
-                color_attrs = curses.A_BOLD | attrs
-                if curses.has_colors():
-                    try:
-                        curses.start_color()
-                        curses.use_default_colors()
-                        curses.init_pair(1, curses.COLOR_RED, -1)
-                        color_attrs |= curses.color_pair(1)
-                    except curses.error:
-                        pass
-            elif "正常" in value_text or "已刷新" in value_text:
-                color_attrs = curses.A_BOLD | attrs
-                if curses.has_colors():
-                    try:
-                        curses.start_color()
-                        curses.use_default_colors()
-                        curses.init_pair(3, curses.COLOR_GREEN, -1)
-                        color_attrs |= curses.color_pair(3)
-                    except curses.error:
-                        pass
-            stdscr.addnstr(row, left, _truncate(label, content_width), content_width, color_attrs)
+            stdscr.addnstr(row, left, _truncate(label, content_width), content_width, _readonly_attrs(item.title, value_text, attrs))
             row += 1
             continue
-        stdscr.addnstr(row, left, _truncate(label, content_width), content_width, attrs)
+        _render_plain_menu_item(stdscr, row=row, left=left, content_width=content_width, label=label, attrs=attrs)
         row += 1
     return cursor_pos, row
+
+
+def _render_input_menu_item(
+    stdscr,
+    *,
+    item: MenuItem,
+    row: int,
+    left: int,
+    content_width: int,
+    prefix: str,
+    marker: str,
+    title_indent: str,
+    value_text: str,
+    attrs: int,
+    is_editing: bool,
+    edit_chars: list[str] | None,
+    edit_cursor: int,
+) -> tuple[int, int]:
+    dots = "·" * max(2, 18 - min(_display_width(item.title), 16))
+    marker_str = marker.strip()
+    if marker_str:
+        base = f"{title_indent}{prefix} {marker} {item.title}"
+    else:
+        base = f"{title_indent}{prefix} {item.title}"
+    if is_editing and edit_chars is not None:
+        edit_text = "".join(edit_chars)
+        label_prefix = f"{base} {dots} "
+        stdscr.addnstr(row, left, _truncate(label_prefix, content_width), content_width, curses.A_REVERSE)
+        edit_start_x = left + _display_width(label_prefix)
+        edit_width = content_width - _display_width(label_prefix)
+        stdscr.addnstr(row, edit_start_x, _truncate(edit_text, edit_width), edit_width, curses.A_UNDERLINE)
+        cursor_display_pos = _display_width("".join(edit_chars[:edit_cursor]))
+        return row, edit_start_x + min(cursor_display_pos, edit_width)
+    label = f"{base} {dots} {value_text}" if value_text else base
+    stdscr.addnstr(row, left, _truncate(label, content_width), content_width, attrs)
+    return row, left
+
+
+def _render_inline_choice_menu_item(
+    stdscr,
+    *,
+    item: MenuItem,
+    row: int,
+    left: int,
+    content_width: int,
+    prefix: str,
+    title_indent: str,
+    attrs: int,
+    selected: bool,
+) -> tuple[int, int]:
+    if item.title:
+        label = f"{title_indent}{prefix} {item.title}"
+    else:
+        label = title_indent
+    stdscr.addnstr(row, left, _truncate(label, content_width), content_width, attrs)
+    start_x = left + min(_display_width(label), max(0, content_width - 1))
+    cell_width = max((min(18, _display_width(f"[ ] {choice.label}") + 4) for choice in item.inline_choices), default=12)
+    for choice_index, choice in enumerate(item.inline_choices):
+        text = f"{'[*]' if choice.checked else '[ ]'} {choice.label}"
+        choice_attr = curses.A_REVERSE if selected and choice_index == item.inline_selected_index else 0
+        remaining = max(0, left + content_width - start_x)
+        if remaining <= 0:
+            break
+        padded = text.ljust(cell_width)
+        stdscr.addnstr(row, start_x, _truncate(padded, remaining), remaining, choice_attr)
+        start_x += cell_width + 2
+    return row, left
+
+
+def _build_basic_menu_label(*, prefix: str, marker: str, title_indent: str, display_title: str, value_text: str, item_type: str) -> str:
+    marker_str = marker.strip()
+    if marker_str:
+        label = f"{title_indent}{prefix} {marker} {display_title}"
+    else:
+        label = f"{title_indent}{prefix} {display_title}"
+    if value_text and item_type not in {"check"}:
+        label = f"{label}: {value_text}"
+    return label
+
+
+def _render_plain_menu_item(stdscr, *, row: int, left: int, content_width: int, label: str, attrs: int) -> None:
+    stdscr.addnstr(row, left, _truncate(label, content_width), content_width, attrs)
+
+
+def _readonly_attrs(title: str, value_text: str, attrs: int) -> int:
+    if "限流" in value_text or "429" in value_text or "限流" in title:
+        return _status_attr(curses.COLOR_YELLOW, attrs)
+    if "失败" in value_text or "失败" in title:
+        return _status_attr(curses.COLOR_RED, attrs)
+    if "正常" in value_text or "已刷新" in value_text:
+        return _status_attr(curses.COLOR_GREEN, attrs)
+    return curses.A_DIM | attrs
+
+
+def _status_attr(color: int, attrs: int) -> int:
+    color_attrs = curses.A_BOLD | attrs
+    if curses.has_colors():
+        try:
+            curses.start_color()
+            curses.use_default_colors()
+            pair_id = {
+                curses.COLOR_RED: 1,
+                curses.COLOR_YELLOW: 2,
+                curses.COLOR_GREEN: 3,
+                curses.COLOR_CYAN: 4,
+            }[color]
+            curses.init_pair(pair_id, color, -1)
+            color_attrs |= curses.color_pair(pair_id)
+        except curses.error:
+            pass
+    return color_attrs
 
 
 def _render_status_lines(stdscr, status_lines: list[str], content_end: int, left: int, content_width: int, height: int) -> None:
@@ -636,29 +830,25 @@ def _render_status_lines(stdscr, status_lines: list[str], content_end: int, left
     for offset, line in enumerate(visible_lines):
         row = start_row + offset
         if 0 <= row < height:
-            attrs = curses.A_DIM
-            text = line
-            prefix_map = {
-                "[RED] ": curses.COLOR_RED,
-                "[YELLOW] ": curses.COLOR_YELLOW,
-                "[GREEN] ": curses.COLOR_GREEN,
-                "[BLUE] ": curses.COLOR_CYAN,
-            }
-            for prefix, color in prefix_map.items():
-                if line.startswith(prefix):
-                    text = line[len(prefix):]
-                    attrs = curses.A_BOLD
-                    if curses.has_colors():
-                        try:
-                            curses.start_color()
-                            curses.use_default_colors()
-                            pair_id = {curses.COLOR_RED: 1, curses.COLOR_YELLOW: 2, curses.COLOR_GREEN: 3, curses.COLOR_CYAN: 4}[color]
-                            curses.init_pair(pair_id, color, -1)
-                            attrs |= curses.color_pair(pair_id)
-                        except curses.error:
-                            pass
-                    break
+            text, attrs = _status_line_display(line)
             stdscr.addnstr(row, left, text, content_width, attrs)
+
+
+def _status_line_display(line: str) -> tuple[str, int]:
+    attrs = curses.A_DIM
+    text = line
+    prefix_map = {
+        "[RED] ": curses.COLOR_RED,
+        "[YELLOW] ": curses.COLOR_YELLOW,
+        "[GREEN] ": curses.COLOR_GREEN,
+        "[BLUE] ": curses.COLOR_CYAN,
+    }
+    for prefix, color in prefix_map.items():
+        if line.startswith(prefix):
+            text = line[len(prefix):]
+            attrs = _status_attr(color, 0)
+            break
+    return text, attrs
 
 
 def _first_focusable_index(items: list[MenuItem], preferred: int = 0) -> int:

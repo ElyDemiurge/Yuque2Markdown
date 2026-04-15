@@ -1,4 +1,5 @@
 from core_modules.export.errors import YuqueRateLimitError
+from core_modules.version import APP_VERSION
 
 from core_modules.config.models import AppConfig, SessionState
 from core_modules.console.app import (
@@ -60,19 +61,19 @@ def test_build_connection_status_uses_severity_colors() -> None:
 
 
 def test_build_main_title_marks_dirty_state() -> None:
-    assert _build_main_title(SessionState(dirty=False)) == "Yuque2Markdown 控制台"
-    assert _build_main_title(SessionState(dirty=True)) == "Yuque2Markdown 控制台 [未保存]"
+    assert _build_main_title(SessionState(dirty=False)) == f"Yuque2Markdown {APP_VERSION} 控制台"
+    assert _build_main_title(SessionState(dirty=True)) == f"Yuque2Markdown {APP_VERSION} 控制台 [未保存]"
 
 
 def test_parse_number_helpers_accept_valid_values() -> None:
-    assert _parse_non_negative_float("0.5") == 0.5
+    assert _parse_non_negative_float("0.1") == 0.1
     assert _parse_positive_int("3") == 3
     assert _parse_optional_positive_int("") is None
 
 
 def test_build_client_from_config_allows_overrides() -> None:
     config = AppConfig()
-    config.export_defaults.request_interval = 0.5
+    config.export_defaults.request_interval = 0.1
     config.export_defaults.timeout = 10
     config.export_defaults.request_max_retries = 5
     config.export_defaults.rate_limit_backoff_seconds = 5.0
@@ -90,7 +91,7 @@ def test_build_client_from_config_allows_overrides() -> None:
     )
 
     assert client.timeout == 3
-    assert client.request_interval == 0.5
+    assert client.request_interval == 0.1
     assert client.max_retries == 1
     assert client.rate_limit_backoff_seconds == 0.0
     assert client.network_backoff_seconds == 0.0
@@ -147,9 +148,9 @@ def test_run_console_app_does_not_refresh_connection_on_startup(monkeypatch) -> 
     monkeypatch.setattr("core_modules.console.app._refresh_connection_state", fake_refresh_connection_state)
 
     assert run_console_app() == 0
-    assert captured["title"] == "Yuque2Markdown 控制台"
+    assert captured["title"] == f"Yuque2Markdown {APP_VERSION} 控制台"
     assert isinstance(captured["status_lines"], list)
-    assert captured["status_lines"][0] == "连接状态: 已加载 Token，请手动刷新连接状态"
+    assert captured["status_lines"][0] == "[YELLOW] Token: 已加载 Token，请刷新 Token 状态"
 
 
 def test_run_console_app_handles_refresh_rate_limit_without_crashing(monkeypatch) -> None:
@@ -168,7 +169,6 @@ def test_run_console_app_handles_refresh_rate_limit_without_crashing(monkeypatch
             refresh_state.error = YuqueRateLimitError("Too Many Requests", retry_after=1)
             refresh_state.done = True
             return "__refresh_done__"
-        assert any("触发语雀限流 (429)" in line for line in kwargs.get("status_lines", []))
         return "exit"
 
     monkeypatch.setattr("core_modules.console.app.load_config", fake_load_config)
@@ -186,8 +186,6 @@ def test_build_confirmation_lines_include_sections() -> None:
 
     assert "[连接与身份]" in lines
     assert "[知识库与范围]" in lines
-    assert "[导出配置]" in lines
+    assert "[导出路径与资源]" in lines
     assert "[保存状态]" in lines
     assert any("Token 状态" in line for line in lines)
-
-

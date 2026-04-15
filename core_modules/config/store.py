@@ -6,11 +6,32 @@ import warnings
 from dataclasses import asdict
 from pathlib import Path
 
-from core_modules.config.models import AppConfig, ExportDefaultsConfig, ProxyConfig, UiPreferences
+from core_modules.config.models import (
+    AppConfig,
+    DEFAULT_ATTACHMENT_SUFFIXES,
+    ExportDefaultsConfig,
+    ProxyConfig,
+    UiPreferences,
+    normalize_attachment_suffixes,
+)
 
 from core_modules.config.validator import validate_config, format_validation_errors, ValidationError
 
 CONFIG_FILE_NAME = "yuque2markdown.config.json"
+
+
+def _translate_legacy_file_type(file_type: object) -> list[str]:
+    mapping = {
+        0: list(DEFAULT_ATTACHMENT_SUFFIXES),
+        1: [],
+        2: [],
+        3: [".pdf"],
+        4: [".pdf"],
+    }
+    try:
+        return mapping.get(int(file_type), list(DEFAULT_ATTACHMENT_SUFFIXES))
+    except (TypeError, ValueError):
+        return list(DEFAULT_ATTACHMENT_SUFFIXES)
 
 
 def config_path(base_dir: Path | None = None) -> Path:
@@ -26,6 +47,12 @@ def load_config(base_dir: Path | None = None) -> AppConfig:
     export_defaults = data.get("export_defaults", {})
     ui_preferences = data.get("ui_preferences", {})
     proxy_data = export_defaults.pop("proxy", {})
+    legacy_file_type = export_defaults.pop("file_type", None)
+    attachment_suffixes = export_defaults.get("attachment_suffixes")
+    if attachment_suffixes is None and legacy_file_type is not None:
+        export_defaults["attachment_suffixes"] = _translate_legacy_file_type(legacy_file_type)
+    else:
+        export_defaults["attachment_suffixes"] = normalize_attachment_suffixes(attachment_suffixes)
     proxy = ProxyConfig(**proxy_data) if proxy_data else ProxyConfig()
     config = AppConfig(
         version=int(data.get("version", 1)),
@@ -61,6 +88,9 @@ def save_config(config: AppConfig, base_dir: Path | None = None, *, validate: bo
 
     path = config_path(base_dir)
     payload = asdict(config)
+    payload["export_defaults"]["attachment_suffixes"] = normalize_attachment_suffixes(
+        config.export_defaults.attachment_suffixes
+    )
     if not config.persist_token:
         payload["token"] = ""
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")

@@ -56,7 +56,7 @@ def _fit(text: str, width: int) -> str:
 
 
 class ExportProgressUI:
-    """导出进度 UI，支持实时更新、告警滚动查看与中断确认。"""
+    """导出进度 UI，支持实时更新、警告滚动查看与中断确认。"""
 
     RESET = "\033[0m"
     BOLD = "\033[1m"
@@ -126,7 +126,12 @@ class ExportProgressUI:
         return result["value"]  # type: ignore[return-value]
 
     def _append_history(self, snapshot: ProgressSnapshot) -> None:
-        if snapshot.latest_warning and snapshot.latest_warning != self._last_warning:
+        if snapshot.new_warnings:
+            for warning in snapshot.new_warnings:
+                if warning != self._last_warning:
+                    self.history.append(("WARN", warning))
+                    self._last_warning = warning
+        elif snapshot.latest_warning and snapshot.latest_warning != self._last_warning:
             self.history.append(("WARN", snapshot.latest_warning))
             self._last_warning = snapshot.latest_warning
         if snapshot.latest_error and snapshot.latest_error != self._last_error:
@@ -190,7 +195,7 @@ class ExportProgressUI:
                 (left, self._section_header("统计")),
                 (left, self._build_stats_line(snapshot)),
                 (left, sep),
-                (left, self._section_header("告警记录")),
+                (left, self._section_header("警告")),
             ]
         )
         for line in self._format_history_ansi(content_width):
@@ -221,7 +226,7 @@ class ExportProgressUI:
     def _render_curses(self, stdscr, snapshot: ProgressSnapshot) -> None:
         stdscr.clear()
         height, width = stdscr.getmaxyx()
-        help_lines = ["Ctrl+C 退出确认 | ↑↓ 滚动告警 | PgUp/PgDn 快速滚动"]
+        help_lines = ["Ctrl+C 退出确认 | ↑↓ 滚动警告 | PgUp/PgDn 快速滚动"]
         content_width = min(width - 1, max(60, min(128, width - 4)))
         left = max(0, (width - content_width) // 2)
         top_margin = max(1, height // 8)
@@ -290,7 +295,7 @@ class ExportProgressUI:
         fixed_lines.extend(
             [
                 ("─" * content_width, self._curses_attr(curses, "divider")),
-                ("── 告警记录 ──", self._curses_attr(curses, "section")),
+                ("── 警告 ──", self._curses_attr(curses, "section")),
             ]
         )
 
@@ -410,7 +415,7 @@ class ExportProgressUI:
 
     def _format_history_ansi(self, width: int) -> list[str]:
         if not self.history:
-            return ["  " + self._colorize("─ 暂无告警或异常", self._dim_gray())]
+            return ["  " + self._colorize("─ 暂无警告或异常", self._dim_gray())]
         lines: list[str] = []
         for level, message in self.history[-6:]:
             color = self.YELLOW if level == "WARN" else self.RED
@@ -420,7 +425,7 @@ class ExportProgressUI:
 
     def _plain_history_lines(self, width: int) -> list[str]:
         if not self.history:
-            return ["  - 暂无告警或异常"]
+            return ["  - 暂无警告或异常"]
         lines: list[str] = []
         for level, message in self.history:
             prefix = "[!]" if level == "WARN" else "[x]"
@@ -429,12 +434,12 @@ class ExportProgressUI:
 
     def _slice_history_lines(self, lines: list[str], visible_rows: int) -> tuple[list[str], str]:
         if not lines:
-            return ["  - 暂无告警或异常"], "告警 0/0"
+            return ["  - 暂无警告或异常"], "警告 0/0"
         max_scroll = max(0, len(lines) - visible_rows)
         self.history_scroll = min(self.history_scroll, max_scroll)
         start = self.history_scroll
         end = min(len(lines), start + visible_rows)
-        return lines[start:end], f"告警 {start + 1}-{end}/{len(lines)}"
+        return lines[start:end], f"警告 {start + 1}-{end}/{len(lines)}"
 
     def _build_footer_lines(self, snapshot: ProgressSnapshot) -> list[tuple[str, int]]:
         lines: list[tuple[str, int]] = []

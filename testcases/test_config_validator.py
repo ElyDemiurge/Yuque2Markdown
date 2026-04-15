@@ -102,6 +102,12 @@ def test_assets_dir_whitespace():
     assert any(e.field == "assets_dir_name" for e in errors)
 
 
+def test_attachment_suffix_invalid():
+    defaults = ExportDefaultsConfig(attachment_suffixes=["pdf"])
+    errors = validate_export_defaults(defaults)
+    assert any(e.field == "attachment_suffixes" for e in errors)
+
+
 # ── Proxy validation ───────────────────────────────────────────
 
 def test_proxy_enabled_without_host():
@@ -219,29 +225,3 @@ def test_proxy_test_url_no_domain_rejected():
     proxy = ProxyConfig(enabled=False, test_url="https://")
     errors = validate_proxy(proxy)
     assert any(e.field == "proxy.test_url" for e in errors)
-
-
-if __name__ == "__main__":
-    import traceback
-
-    tests = [
-        obj
-        for name, obj in globals().items()
-        if name.startswith("test_") and callable(obj)
-    ]
-
-    passed = failed = 0
-    for test in tests:
-        try:
-            test()
-            print(f"  PASS: {test.__name__}")
-            passed += 1
-        except AssertionError as e:
-            print(f"  FAIL: {test.__name__}: {e}")
-            failed += 1
-        except Exception as e:
-            print(f"  ERROR: {test.__name__}: {e}")
-            traceback.print_exc()
-            failed += 1
-
-    print(f"\nResults: {passed} passed, {failed} failed")

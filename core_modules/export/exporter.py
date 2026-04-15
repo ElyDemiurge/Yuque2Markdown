@@ -26,6 +26,35 @@ from core_modules.lake.converter import render_doc_markdown
 from core_modules.lake.localizer import localize_markdown_assets
 
 
+def build_doc_markdown_result(
+    doc_data: dict | None = None,
+    *,
+    render_result=None,
+    markdown_path: Path,
+    assets_dir: Path,
+    offline_assets: bool,
+    attachment_suffixes: list[str],
+    fetch_binary=None,
+    doc_slug_map: dict[str, str] | None = None,
+):
+    """构建单篇文档最终 Markdown 结果，供导出与重生成复用。"""
+    if render_result is None:
+        if doc_data is None:
+            raise ValueError("doc_data 和 render_result 不能同时为空")
+        render_result = render_doc_markdown(doc_data)
+    if not offline_assets:
+        return render_result
+    # 离线资源启用后，优先复用本地 assets；缺失时再尝试下载并重写链接。
+    return localize_markdown_assets(
+        render_result,
+        assets_dir=assets_dir,
+        fetch_binary=fetch_binary,
+        doc_slug_map=doc_slug_map,
+        current_markdown_path=markdown_path,
+        attachment_suffixes=attachment_suffixes,
+    )
+
+
 class Exporter:
     """负责按目录树导出知识库文档与资源。"""
     def __init__(self, client: YuqueClient, progress_callback: Callable[[ProgressSnapshot], None] | None = None) -> None:
@@ -285,6 +314,8 @@ class Exporter:
             raise ExportError(f"缺少文档标识: {node.title}")
 
         log.doc_started(node.title)
+        if hasattr(self.client, "set_debug_logger"):
+            self.client.set_debug_logger(lambda message, doc_title=node.title: log.debug(f"[{doc_title}] {message}"))
         self._emit_progress(
             progress,
             current_doc_elapsed_ms=0,
@@ -321,6 +352,7 @@ class Exporter:
         state.warning_count = len(render_result.warnings)
 
         if render_result.warnings:
+            warning_messages = [f"{node.title}: {warning}" for warning in render_result.warnings]
             for w in render_result.warnings:
                 log.warning(f"[{node.title}] {w}")
             self._emit_progress(
@@ -330,6 +362,7 @@ class Exporter:
                 current_doc_resources=len(render_result.resources),
                 active_tasks=[f"渲染完成: {node.title}", f"发现 {len(render_result.warnings)} 个警告，继续资源处理"],
                 latest_warning=f"{node.title}: {render_result.warnings[-1]}",
+                new_warnings=warning_messages,
                 latest_event=f"{node.title} 渲染完成，存在警告",
             )
         else:
@@ -337,10 +370,12 @@ class Exporter:
                 progress,
                 current_doc_warnings=0,
                 current_doc_resources=len(render_result.resources),
+                new_warnings=[],
             )
             self._emit_progress(
                 progress,
                 active_tasks=[f"渲染完成: {node.title}"],
+                new_warnings=[],
             )
 
         log.doc_markdown_done(node.title, state.warning_count, len(render_result.resources))
@@ -348,56 +383,73 @@ class Exporter:
         # 如果启用离线化，先做本地化再写盘；否则直接写原始 Markdown
         final_result = render_result
         if options.offline_assets:
+            # 导出与重生成共用同一条 Markdown 本地化链路，避免规则分叉。
             self._emit_progress(
                 progress,
                 current_doc_title=node.title,
-                current_stage="离线化附件",
-                active_tasks=[f"下载附件: {node.title}", f"重写内部链接: {node.title}"],
+                current_stage="离线化图片和附件",
+                active_tasks=[f"处理图片和附件: {node.title}", f"重写内部链接: {node.title}"],
                 latest_event=f"正在离线化 {node.title} 的资源",
             )
             previous_warning_count = len(state.warnings)
-            final_result = localize_markdown_assets(
-                render_result,
+            final_result = build_doc_markdown_result(
+                render_result=render_result,
+                markdown_path=output_paths.markdown_path,
                 assets_dir=output_paths.assets_dir,
+                offline_assets=True,
+                attachment_suffixes=options.attachment_suffixes,
                 fetch_binary=self.client.fetch_binary,
                 doc_slug_map=checkpoint.doc_slug_map,
-                current_markdown_path=output_paths.markdown_path,
             )
-            rewritten_count = sum(1 for warning in final_result.warnings if warning.startswith("已重写 "))
+            rewritten_count = final_result.rewritten_links
             result.rewritten_links += rewritten_count
-            download_count = sum(1 for r in final_result.resources if r.kind in {"image", "attachment"} and r.local_path and not r.failed)
+            download_count = sum(
+                1 for r in final_result.resources if r.kind in {"image", "attachment"} and r.local_path and not r.failed
+            )
             download_failed = sum(1 for r in final_result.resources if r.kind in {"image", "attachment"} and r.failed)
             state.download_count = download_count
             state.download_failed_count = download_failed
             state.failed_resource_urls = [r.normalized_url for r in final_result.resources if r.failed]
             state.warnings = list(final_result.warnings)
+            state.warning_count = len(final_result.warnings)
             save_checkpoint(repo_dir, checkpoint)
 
             log.doc_assets_done(node.title, download_count, download_failed, rewritten_count)
 
-            warning_increment = max(0, len(final_result.warnings) - previous_warning_count)
-            if warning_increment or state.failed_resource_urls:
-                for w in final_result.warnings[previous_warning_count:]:
-                    log.warning(f"[{node.title}] {w}")
-                latest_warning = None
-                if state.failed_resource_urls:
-                    latest_warning = f"{node.title}: {len(state.failed_resource_urls)} 个资源下载失败"
-                    log.error(f"[{node.title}] {len(state.failed_resource_urls)} 个资源下载失败: {', '.join(state.failed_resource_urls[:3])}")
-                elif final_result.warnings:
-                    latest_warning = f"{node.title}: {final_result.warnings[-1]}"
+            new_asset_warnings = final_result.warnings[previous_warning_count:]
+            for warning in new_asset_warnings:
+                log.warning(f"[{node.title}] {warning}")
+
+            warning_messages = [f"{node.title}: {warning}" for warning in new_asset_warnings]
+            if state.failed_resource_urls:
+                latest_warning = f"{node.title}: {len(state.failed_resource_urls)} 个资源下载失败"
                 self._emit_progress(
                     progress,
-                    warning_count=progress.warning_count + warning_increment,
+                    warning_count=progress.warning_count + len(new_asset_warnings),
+                    current_doc_warnings=state.warning_count,
                     current_doc_downloaded=download_count,
                     active_tasks=[f"资源处理完成: {node.title}"],
                     latest_warning=latest_warning,
+                    new_warnings=warning_messages,
                     latest_event=f"{node.title} 资源处理完成",
                 )
             else:
                 self._emit_progress(
                     progress,
+                    warning_count=progress.warning_count + len(new_asset_warnings),
+                    current_doc_warnings=state.warning_count,
                     current_doc_downloaded=download_count,
+                    active_tasks=[f"资源处理完成: {node.title}"],
+                    latest_warning=warning_messages[-1] if warning_messages else None,
+                    new_warnings=warning_messages,
+                    latest_event=f"{node.title} 资源处理完成",
                 )
+            # 总是更新下载计数
+            self._emit_progress(
+                progress,
+                current_doc_downloaded=download_count,
+                new_warnings=[],
+            )
             state.stage = "assets_localized"
             if options.fail_on_asset_error and state.failed_resource_urls:
                 raise ExportError(f"资源下载失败: {len(state.failed_resource_urls)} 个")
@@ -432,6 +484,8 @@ class Exporter:
             latest_event=f"已完成 {node.title}",
         )
         log.doc_completed(node.title, state.warning_count)
+        if hasattr(self.client, "set_debug_logger"):
+            self.client.set_debug_logger(None)
 
     def _build_doc_output_paths(self, current_dir: Path, safe_name: str, options: ExportOptions) -> DocOutputPaths:
         doc_dir = current_dir / safe_name
@@ -471,8 +525,10 @@ class Exporter:
         progress.rate_limit_limit = rate_limit.get("limit")
         progress.rate_limit_remaining = rate_limit.get("remaining")
         progress.rate_limit_reset = rate_limit.get("reset")
+
         if self.progress_callback is not None:
             self.progress_callback(progress)
+        progress.new_warnings = []
 
     def _collect_doc_titles(self, nodes: list[TocNode], checkpoint: CheckpointState, options: ExportOptions) -> list[str]:
         """收集待导出文档标题，用于初始化进度预览。"""

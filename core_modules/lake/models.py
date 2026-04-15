@@ -24,3 +24,4 @@ class MarkdownRenderResult:
     markdown: str
     resources: list[ResourceRef] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    rewritten_links: int = 0

@@ -3,34 +3,49 @@ from __future__ import annotations
 import mimetypes
 import os
 import re
+from zipfile import BadZipFile, ZipFile
 from pathlib import Path
 from urllib.parse import urlparse
 
+from core_modules.config.models import normalize_attachment_suffixes
 from core_modules.export.file_naming import sanitize_name, unique_name
-from core_modules.lake.models import MarkdownRenderResult, ResourceRef
-from core_modules.lake.resource_parser import extract_yuque_doc_slug, is_yuque_doc_url
 from core_modules.export.writer import write_binary_file
+from core_modules.lake.models import MarkdownRenderResult, ResourceRef
+from core_modules.lake.resource_parser import extract_yuque_doc_slug
+
+YUQUE_ATTACHMENT_UNSUPPORTED_TEMPLATE = "发现 {count} 个语雀附件链接，官方 API 暂不支持下载，已保留原始链接"
 
 
 def localize_markdown_assets(
     render_result: MarkdownRenderResult,
     *,
     assets_dir: Path,
-    fetch_binary,
+    fetch_binary=None,
     doc_slug_map: dict[str, str] | None = None,
     current_markdown_path: Path | None = None,
+    attachment_suffixes: list[str] | None = None,
 ) -> MarkdownRenderResult:
     markdown = render_result.markdown
     warnings = list(render_result.warnings)
+    rewritten = 0
+    # `attachment_suffixes` 相关逻辑继续保留，等语雀官方补齐附件接口后可直接恢复使用。
+    normalized_suffixes = normalize_attachment_suffixes(attachment_suffixes)
+    attachment_resources = [resource for resource in render_result.resources if resource.kind == "attachment"]
 
     if doc_slug_map and current_markdown_path is not None:
         markdown, rewritten = rewrite_doc_links(markdown, render_result.resources, doc_slug_map, current_markdown_path)
-        if rewritten:
-            warnings.append(f"已重写 {rewritten} 个内部文档链接")
+
+    if attachment_resources:
+        warnings.append(YUQUE_ATTACHMENT_UNSUPPORTED_TEMPLATE.format(count=len(attachment_resources)))
 
     asset_resources = [resource for resource in render_result.resources if resource.kind in {"image", "attachment"}]
     if not asset_resources:
-        return MarkdownRenderResult(markdown=markdown, resources=render_result.resources, warnings=warnings)
+        return MarkdownRenderResult(
+            markdown=markdown,
+            resources=render_result.resources,
+            warnings=warnings,
+            rewritten_links=rewritten,
+        )
 
     assets_dir.mkdir(parents=True, exist_ok=True)
     used_names: set[str] = set()
@@ -38,6 +53,10 @@ def localize_markdown_assets(
 
     for resource in render_result.resources:
         if resource.kind not in {"image", "attachment"}:
+            localized_resources.append(resource)
+            continue
+
+        if not _should_download_resource(resource, normalized_suffixes):
             localized_resources.append(resource)
             continue
 
@@ -52,11 +71,21 @@ def localize_markdown_assets(
             failed=resource.failed,
         )
         try:
-            data = fetch_binary(resource.normalized_url)
             file_name = build_asset_name(resource, used_names)
             output_path = assets_dir / file_name
-            write_binary_file(output_path, data)
             relative_path = f"./{assets_dir.name}/{file_name}"
+            if output_path.exists():
+                if _is_valid_existing_asset(output_path):
+                    markdown = _replace_url_multi(markdown, resource, relative_path)
+                    new_resource.local_path = relative_path
+                    localized_resources.append(new_resource)
+                    continue
+                output_path.unlink(missing_ok=True)
+            if fetch_binary is None:
+                localized_resources.append(new_resource)
+                continue
+            data = fetch_binary(resource.normalized_url)
+            write_binary_file(output_path, data)
             markdown = _replace_url_multi(markdown, resource, relative_path)
             new_resource.local_path = relative_path
         except Exception as exc:
@@ -64,7 +93,12 @@ def localize_markdown_assets(
             warnings.append(f"资源下载失败: {resource.normalized_url} ({exc})")
         localized_resources.append(new_resource)
 
-    return MarkdownRenderResult(markdown=markdown, resources=localized_resources, warnings=warnings)
+    return MarkdownRenderResult(
+        markdown=markdown,
+        resources=localized_resources,
+        warnings=warnings,
+        rewritten_links=rewritten,
+    )
 
 
 def rewrite_doc_links(
@@ -140,3 +174,57 @@ def replace_url(markdown: str, old_url: str, new_url: str) -> str:
     """保持向后兼容的单一 URL 替换。"""
     pattern = re.escape(old_url)
     return re.sub(pattern, new_url, markdown)
+
+
+def _should_download_resource(resource: ResourceRef, attachment_suffixes: list[str]) -> bool:
+    """决定资源是否需要下载到本地。"""
+    if resource.kind == "image":
+        return True
+    if resource.kind != "attachment":
+        return False
+    # 当前阶段仅本地化图片，附件仍保留语雀原始链接。
+    # 参数继续保留，避免未来恢复附件下载时再改外部调用链。
+    return False
+
+
+def _resource_suffix_candidates(resource: ResourceRef) -> list[str]:
+    """提取资源可能的扩展名候选。"""
+    candidates: list[str] = []
+    for raw in (resource.normalized_url, resource.title or "", resource.alt_text or ""):
+        suffix = Path(urlparse(raw).path or raw).suffix.lower()
+        if suffix and suffix not in candidates:
+            candidates.append(suffix)
+    return candidates
+
+
+def _is_valid_existing_asset(path: Path) -> bool:
+    """判断已存在本地资源是否可信，避免复用误下载的 HTML 页面。"""
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return False
+    if _looks_like_html_file(data):
+        return False
+    suffix = path.suffix.lower()
+    if suffix in {".docx", ".xlsx", ".pptx", ".zip"}:
+        return _is_valid_zip_file(path)
+    if suffix == ".pdf":
+        return data.startswith(b"%PDF-")
+    if suffix == ".7z":
+        return data.startswith(b"7z\xbc\xaf\x27\x1c")
+    if suffix == ".rar":
+        return data.startswith(b"Rar!")
+    return True
+
+
+def _looks_like_html_file(data: bytes) -> bool:
+    prefix = data[:256].lstrip().lower()
+    return prefix.startswith(b"<!doctype html") or prefix.startswith(b"<html")
+
+
+def _is_valid_zip_file(path: Path) -> bool:
+    try:
+        with ZipFile(path) as archive:
+            return archive.testzip() is None
+    except (BadZipFile, OSError):
+        return False

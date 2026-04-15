@@ -67,6 +67,7 @@ class ExportOptions:
     offline_assets: bool = True
     assets_dir_name: str = "assets"
     fail_on_asset_error: bool = False
+    attachment_suffixes: list[str] = field(default_factory=lambda: ["*"])
 
 
 @dataclass(slots=True)
@@ -98,6 +99,7 @@ class ProgressSnapshot:
     waiting_docs: int = 0
     warning_count: int = 0
     latest_warning: str | None = None
+    new_warnings: list[str] = field(default_factory=list)
     latest_error: str | None = None
     latest_event: str = "初始化"
     active_tasks: list[str] = field(default_factory=list)

@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import os
-from pathlib import Path
 from typing import Callable
 
 from core_modules.export.client import DEFAULT_TIMEOUT, YuqueClient

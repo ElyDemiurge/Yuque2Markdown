@@ -60,6 +60,14 @@ def test_progress_ui_warning_history():
     assert ui.history[0][0] == "WARN"
 
 
+def test_progress_ui_appends_all_new_warnings():
+    stream = DummyStream()
+    ui = ExportProgressUI(stream=stream)
+    snapshot = ProgressSnapshot(new_warnings=["warning 1", "warning 2"])
+    ui.update(snapshot)
+    assert [item[1] for item in ui.history] == ["warning 1", "warning 2"]
+
+
 def test_progress_ui_error_history():
     stream = DummyStream()
     ui = ExportProgressUI(stream=stream)
@@ -78,11 +86,11 @@ def test_progress_ui_keeps_full_history_when_unbounded():
     lines = ui._plain_history_lines(80)
     visible, label = ui._slice_history_lines(lines, 3)
     assert len(visible) == 3
-    assert label == "告警 1-3/8"
+    assert label == "警告 1-3/8"
     ui.history_scroll = 5
     visible, label = ui._slice_history_lines(lines, 3)
     assert visible[0].endswith("warning 5")
-    assert label == "告警 6-8/8"
+    assert label == "警告 6-8/8"
 
 
 def test_stage_color():
@@ -90,23 +98,3 @@ def test_stage_color():
     assert ui._stage_color("已完成") == ui.GREEN
     assert ui._stage_color("导出失败") == ui.RED
     assert ui._stage_color("限流等待") == ui.YELLOW
-
-
-if __name__ == "__main__":
-    import traceback
-
-    tests = [obj for name, obj in globals().items() if name.startswith("test_") and callable(obj)]
-    passed = failed = 0
-    for test in tests:
-        try:
-            test()
-            print(f"  PASS: {test.__name__}")
-            passed += 1
-        except AssertionError as e:
-            print(f"  FAIL: {test.__name__}: {e}")
-            failed += 1
-        except Exception as e:
-            print(f"  ERROR: {test.__name__}: {e}")
-            traceback.print_exc()
-            failed += 1
-    print(f"\nResults: {passed} passed, {failed} failed")

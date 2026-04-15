@@ -2,12 +2,66 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+import re
 from typing import TYPE_CHECKING
 
 from core_modules.export.models import ExportOptions
 
 if TYPE_CHECKING:
     from core_modules.console.menu import MenuRefreshState
+
+
+DEFAULT_ATTACHMENT_SUFFIXES = ["*"]
+_ATTACHMENT_SUFFIX_SPLIT_RE = re.compile(r"[\s,，;；]+")
+
+
+def normalize_attachment_suffixes(values: list[str] | tuple[str, ...] | set[str] | str | None) -> list[str]:
+    """规范化附件扩展名配置。
+
+    规则：
+    - `["*"]` 表示保留“全部附件类型”的配置语义
+    - `[]` 表示当前不下载任何附件，仅保留远程链接
+    - 其他值按扩展名列表处理，例如 `[".pdf", ".mp4"]`
+
+    当前版本中，这些配置主要用于保留附件下载策略结构；
+    语雀附件实际仍保持原始链接，不会据此触发下载。
+    """
+    if values is None:
+        return list(DEFAULT_ATTACHMENT_SUFFIXES)
+    if isinstance(values, str):
+        values = [part for part in _ATTACHMENT_SUFFIX_SPLIT_RE.split(values) if part]
+
+    normalized: list[str] = []
+    for raw in values:
+        text = str(raw or "").strip().lower()
+        if not text:
+            continue
+        if text in {"*", "all", "全部", "全部附件"}:
+            return list(DEFAULT_ATTACHMENT_SUFFIXES)
+        if not text.startswith("."):
+            text = f".{text}"
+        if text not in normalized:
+            normalized.append(text)
+    return normalized
+
+
+def parse_attachment_suffixes_input(value: str | None) -> list[str]:
+    """解析控制台输入的附件扩展名。"""
+    text = (value or "").strip()
+    if not text:
+        return []
+    parts = [part for part in _ATTACHMENT_SUFFIX_SPLIT_RE.split(text) if part]
+    return normalize_attachment_suffixes(parts)
+
+
+def summarize_attachment_suffixes(values: list[str] | tuple[str, ...] | set[str] | str | None) -> str:
+    """将附件扩展名配置格式化为可展示文本。"""
+    normalized = normalize_attachment_suffixes(values)
+    if normalized == DEFAULT_ATTACHMENT_SUFFIXES:
+        return "全部附件（当前仍保留原始链接）"
+    if not normalized:
+        return "不下载附件"
+    return ", ".join(normalized)
 
 
 @dataclass(slots=True)
@@ -25,7 +79,7 @@ class ExportDefaultsConfig:
     output_dir: str = "output"
     resume: bool = True
     strict: bool = False
-    request_interval: float = 0.2
+    request_interval: float = 0.1
     timeout: int = 10
     token_check_timeout: int = 5
     request_max_retries: int = 5
@@ -36,6 +90,7 @@ class ExportDefaultsConfig:
     offline_assets: bool = True
     assets_dir_name: str = "assets"
     fail_on_asset_error: bool = False
+    attachment_suffixes: list[str] = field(default_factory=lambda: list(DEFAULT_ATTACHMENT_SUFFIXES))
     proxy: ProxyConfig = field(default_factory=ProxyConfig)
 
 
@@ -99,4 +154,5 @@ def build_export_options(config: AppConfig, repo_input: str, selected_doc_ids: s
         offline_assets=defaults.offline_assets,
         assets_dir_name=defaults.assets_dir_name,
         fail_on_asset_error=defaults.fail_on_asset_error,
+        attachment_suffixes=normalize_attachment_suffixes(defaults.attachment_suffixes),
     )

@@ -84,7 +84,7 @@ def lake_to_markdown(doc_data: dict) -> tuple[str, list[str]]:
 def _render_lake_document(text: str) -> tuple[str, list[str]]:
     warnings: list[str] = []
     source = text.replace("\r\n", "\n").replace("\r", "\n")
-    source = source.replace("\x00", "")  # 移除 XML 不允许的 null 字符
+    source = _strip_invalid_xml_chars(source)
     source = re.sub(r"<!doctype\s+lake>", "", source, flags=re.I)
     source = re.sub(r"<meta\b[^>]*/?>", "", source, flags=re.I)
     source = re.sub(r"<br\s*/?>", "<br />", source, flags=re.I)
@@ -122,8 +122,8 @@ def _render_lake_block(element: ET.Element, *, warnings: list[str], list_indent:
         level = original_level + 1
         text = _render_lake_inline(element, warnings=warnings).strip()
         if level > 6:
-            warnings.append(f'标题层级超出 H6 最大限制："{text}"（原 h{original_level} → h{level}，已降为 h6）')
-            level = 6
+            warnings.append(f'标题层级超出 H6 最大限制："{text}"（原 h{original_level} → h{level}，已改为无序列表）')
+            return f"- {text}" if text else ""
         return f"{'#' * level} {text}" if text else ""
 
     if tag == "p":
@@ -372,6 +372,15 @@ def _render_lake_card(element: ET.Element, *, warnings: list[str]) -> str:
 
     if name == "video":
         return _render_lake_video(element, warnings=warnings)
+
+    if name == "math":
+        return _render_lake_math(payload)
+
+    if name == "bookmarkinline":
+        return _render_lake_bookmarkinline(element, payload)
+
+    if name == "board":
+        return _render_lake_board(payload)
 
     if name in {"file", "localdoc"}:
         src = str(payload.get("src") or payload.get("source") or "").strip()
@@ -648,3 +657,76 @@ def _render_lake_video(element: ET.Element, *, warnings: list[str]) -> str:
     if url:
         return f"[{title}]({url})"
     return f"[视频]"
+
+
+def _render_lake_board(payload: dict) -> str:
+    """转换 board card，优先输出思维导图文本，再保留整图链接。"""
+    outline = _render_board_outline(payload.get("diagramData", {}).get("body", []))
+    src = str(payload.get("src") or "").strip()
+    parts: list[str] = []
+    if outline:
+        parts.append(outline)
+    if src:
+        parts.append(f"![board]({src})")
+    return "\n\n".join(part for part in parts if part)
+
+
+def _render_lake_math(payload: dict) -> str:
+    """转换 math card 为 Markdown 公式。"""
+    code = str(payload.get("code") or "").strip()
+    src = str(payload.get("src") or "").strip()
+    if code:
+        compact = " ".join(code.split())
+        if "\n" in code:
+            return f"$$\n{code}\n$$"
+        return f"${compact}$"
+    if src:
+        return f"![公式]({src})"
+    return ""
+
+
+def _render_lake_bookmarkinline(element: ET.Element, payload: dict) -> str:
+    """转换 bookmarkinline card 为普通链接。"""
+    href = (
+        str(payload.get("href") or payload.get("url") or payload.get("src") or "").strip()
+        or str(element.attrib.get("href") or "").strip()
+    )
+    title = (
+        str(payload.get("title") or payload.get("name") or "").strip()
+        or str(element.attrib.get("title") or "").strip()
+    )
+    if href:
+        return f"[{title or href}]({href})"
+    return title
+
+
+def _strip_invalid_xml_chars(text: str) -> str:
+    """移除 XML 1.0 不允许的控制字符。"""
+    return "".join(
+        ch
+        for ch in text
+        if ch in "\t\n\r" or ord(ch) >= 0x20
+    )
+
+
+def _render_board_outline(nodes: list[dict], depth: int = 0) -> str:
+    """将 board/mindmap 结构降级为 Markdown 列表。"""
+    lines: list[str] = []
+    for node in nodes:
+        text = _normalize_board_text(node.get("html"))
+        if text:
+            lines.append(f"{'  ' * depth}- {text}")
+        children = node.get("children") or []
+        if isinstance(children, list) and children:
+            child_lines = _render_board_outline(children, depth + 1)
+            if child_lines:
+                lines.append(child_lines)
+    return "\n".join(line for line in lines if line.strip())
+
+
+def _normalize_board_text(value: object) -> str:
+    """清洗 board 节点文本。"""
+    text = html.unescape(str(value or ""))
+    text = re.sub(r"<[^>]+>", "", text)
+    text = text.replace("\u200b", "").strip()
+    return text

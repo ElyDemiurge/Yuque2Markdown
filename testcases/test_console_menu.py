@@ -25,29 +25,3 @@ def test_move_focus_skips_non_focusable_items() -> None:
 
     assert _move_focus(items, 1, 1) == 3
     assert _move_focus(items, 3, -1) == 1
-
-
-if __name__ == "__main__":
-    import traceback
-
-    tests = [
-        obj
-        for name, obj in globals().items()
-        if name.startswith("test_") and callable(obj)
-    ]
-
-    passed = failed = 0
-    for test in tests:
-        try:
-            test()
-            print(f"  PASS: {test.__name__}")
-            passed += 1
-        except AssertionError as e:
-            print(f"  FAIL: {test.__name__}: {e}")
-            failed += 1
-        except Exception as e:
-            print(f"  ERROR: {test.__name__}: {e}")
-            traceback.print_exc()
-            failed += 1
-
-    print(f"\nResults: {passed} passed, {failed} failed")

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from core_modules.config.models import AppConfig, SessionState
+from core_modules.config.models import AppConfig, SessionState, summarize_attachment_suffixes
 from core_modules.config.store import config_path
 
 
@@ -59,6 +59,7 @@ def build_connection_status(status_message: str, rate_limit_summary: str, error_
 
 
 def build_confirmation_lines(config: AppConfig, session: SessionState, *, build_selected_docs_text) -> list[str]:
+    attachment_status = "官方 API 暂不支持导出语雀附件，保留原始链接（图片仍下载）"
     lines = [
         "[连接与身份]",
         f"当前用户: {session.current_user_label}",
@@ -78,6 +79,7 @@ def build_confirmation_lines(config: AppConfig, session: SessionState, *, build_
             f"严格模式: {bool_text(config.export_defaults.strict)}",
             f"离线资源: {bool_text(config.export_defaults.offline_assets)}",
             f"资源目录: {config.export_defaults.assets_dir_name}",
+            f"附件下载: {attachment_status}",
             f"API 请求间隔: {config.export_defaults.request_interval}",
             f"API 请求超时: {config.export_defaults.timeout}s",
             f"检查 Token 可用性超时: {config.export_defaults.token_check_timeout}s",

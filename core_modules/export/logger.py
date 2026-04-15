@@ -85,6 +85,9 @@ class ExportLogger:
     def info(self, message: str) -> None:
         self._write("INFO", message)
 
+    def debug(self, message: str) -> None:
+        self._write("DEBUG", message)
+
     # ── 内部 ──────────────────────────────────────────────────
 
     def _write(self, level: str, message: str) -> None:

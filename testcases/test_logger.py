@@ -19,10 +19,12 @@ def test_logger_write_and_read(tmp_path):
 def test_logger_multiple_levels(tmp_path):
     log_path = tmp_path / "test.log"
     log = ExportLogger(log_path)
+    log.debug("debug msg")
     log.info("info msg")
     log.warning("warn msg")
     log.error("error msg")
     content = log_path.read_text(encoding="utf-8")
+    assert "[DEBUG" in content
     assert "[INFO" in content
     assert "[WARN" in content
     assert "[ERROR" in content
@@ -96,34 +98,3 @@ def test_logger_elapsed_timing(tmp_path):
     content = log_path.read_text(encoding="utf-8")
     lines = content.strip().split("\n")
     assert len(lines) == 2
-
-
-if __name__ == "__main__":
-    import tempfile
-    import traceback
-
-    tests = [
-        obj
-        for name, obj in globals().items()
-        if name.startswith("test_") and callable(obj)
-    ]
-
-    passed = failed = 0
-    for test in tests:
-        try:
-            if "tmp_path" in test.__code__.co_varnames:
-                with tempfile.TemporaryDirectory() as tmp:
-                    test(Path(tmp))
-            else:
-                test()
-            print(f"  PASS: {test.__name__}")
-            passed += 1
-        except AssertionError as e:
-            print(f"  FAIL: {test.__name__}: {e}")
-            failed += 1
-        except Exception as e:
-            print(f"  ERROR: {test.__name__}: {e}")
-            traceback.print_exc()
-            failed += 1
-
-    print(f"\nResults: {passed} passed, {failed} failed")

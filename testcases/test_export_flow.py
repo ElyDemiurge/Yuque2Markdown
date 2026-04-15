@@ -105,7 +105,7 @@ def test_export_repo_reports_progress_events(tmp_path: Path) -> None:
     assert result.exported_docs == 2
     assert snapshots
     assert snapshots[0].total_docs == 2
-    assert any(snapshot.current_stage == "离线化附件" for snapshot in snapshots)
+    assert any(snapshot.current_stage == "离线化图片和附件" for snapshot in snapshots)
     assert any(snapshot.active_tasks for snapshot in snapshots)
     assert any(snapshot.waiting_preview for snapshot in snapshots[:-1])
     assert snapshots[-1].current_stage == "已完成"
@@ -117,6 +117,61 @@ def test_export_repo_reports_progress_events(tmp_path: Path) -> None:
     assert snapshots[-1].rate_limit_remaining == 498
     assert snapshots[-1].rate_limit_reset == "1234567890"
     assert snapshots[0].details["log_path"].endswith("export.log")
+
+
+class AttachmentWarningClient(FakeClient):
+    def get_all_repo_docs(self, group_login: str, book_slug: str):
+        return [{"id": 21, "slug": "doc-attachment", "title": "附件文档"}]
+
+    def get_repo_toc(self, group_login: str, book_slug: str):
+        return {"data": [{"type": "DOC", "title": "附件文档", "doc_id": 21, "slug": "doc-attachment"}]}
+
+    def get_doc_detail(self, group_login: str, book_slug: str, doc_id_or_slug: str):
+        body = "[附件](https://www.yuque.com/attachments/yuque/0/2022/pdf/demo.pdf)"
+        return {"data": {"id": 21, "slug": "doc-attachment", "title": "附件文档", "format": "markdown", "body": body}}
+
+
+def test_export_repo_emits_attachment_warning_without_download_failure(tmp_path: Path) -> None:
+    snapshots: list[ProgressSnapshot] = []
+
+    def on_progress(snapshot: ProgressSnapshot) -> None:
+        snapshots.append(
+            ProgressSnapshot(
+                current_doc_title=snapshot.current_doc_title,
+                current_stage=snapshot.current_stage,
+                processed_docs=snapshot.processed_docs,
+                total_docs=snapshot.total_docs,
+                completed_docs=snapshot.completed_docs,
+                skipped_docs=snapshot.skipped_docs,
+                failed_docs=snapshot.failed_docs,
+                waiting_docs=snapshot.waiting_docs,
+                warning_count=snapshot.warning_count,
+                latest_warning=snapshot.latest_warning,
+                latest_error=snapshot.latest_error,
+                latest_event=snapshot.latest_event,
+                active_tasks=list(snapshot.active_tasks),
+                recent_completed=list(snapshot.recent_completed),
+                recent_failed=list(snapshot.recent_failed),
+                waiting_preview=list(snapshot.waiting_preview),
+                rate_limit_limit=snapshot.rate_limit_limit,
+                rate_limit_remaining=snapshot.rate_limit_remaining,
+                rate_limit_reset=snapshot.rate_limit_reset,
+                details=dict(snapshot.details),
+                new_warnings=list(snapshot.new_warnings),
+            )
+        )
+
+    exporter = Exporter(AttachmentWarningClient(), progress_callback=on_progress)
+    repo = RepoRef(group_login="cyberangel", book_slug="rg9gdm")
+    options = ExportOptions(repo_input="cyberangel/rg9gdm", output_dir=tmp_path, request_interval=0)
+    result = exporter.export_repo(repo, options)
+
+    assert result.exported_docs == 1
+    assert any(
+        "官方 API 暂不支持下载，已保留原始链接" in warning
+        for snapshot in snapshots
+        for warning in snapshot.new_warnings
+    )
 
 
 class FailingClient(FakeClient):
@@ -140,26 +195,3 @@ def test_export_repo_logs_failure_on_exception(tmp_path: Path) -> None:
     content = log_path.read_text(encoding="utf-8")
     assert "导出失败" in content
     assert "boom" in content
-
-
-if __name__ == "__main__":
-    import tempfile
-    tests = [
-        obj
-        for name, obj in globals().items()
-        if name.startswith("test_") and callable(obj)
-    ]
-    passed = 0
-    failed = 0
-    for test in tests:
-        try:
-            test()
-            print(f"  PASS: {test.__name__}")
-            passed += 1
-        except AssertionError as e:
-            print(f"  FAIL: {test.__name__}: {e}")
-            failed += 1
-        except Exception as e:
-            print(f"  ERROR: {test.__name__}: {e}")
-            failed += 1
-    print(f"\nResults: {passed} passed, {failed} failed")

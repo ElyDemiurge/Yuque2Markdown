@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import http.client
 import json
+import socket
 import ssl
 import time
 import urllib.error
@@ -21,6 +23,14 @@ from core_modules.export.errors import (
 
 BASE_URL = "https://www.yuque.com/api/v2"
 DEFAULT_TIMEOUT = 10
+RETRYABLE_TRANSPORT_ERRORS = (
+    urllib.error.URLError,
+    http.client.HTTPException,
+    socket.timeout,
+    TimeoutError,
+    ConnectionError,
+    ssl.SSLError,
+)
 
 
 class YuqueClient:
@@ -29,7 +39,7 @@ class YuqueClient:
         self,
         token: str,
         timeout: int = DEFAULT_TIMEOUT,
-        request_interval: float = 0.2,
+        request_interval: float = 0.1,
         max_retries: int = 5,
         rate_limit_backoff_seconds: float = 5.0,
         network_backoff_seconds: float = 2.0,
@@ -53,6 +63,7 @@ class YuqueClient:
             "remaining": None,
             "reset": None,
         }
+        self._debug_logger = None
         self._opener = self._build_opener()
 
     def _build_opener(self):
@@ -126,6 +137,10 @@ class YuqueClient:
         """是否启用了代理。"""
         return bool(self.proxy_host)
 
+    def set_debug_logger(self, callback) -> None:
+        """设置调试日志回调，用于输出资源请求细节。"""
+        self._debug_logger = callback
+
     def request(self, method: str, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         """向语雀 API 发起请求，并处理重试、限流和错误转换。"""
         url = f"{BASE_URL}{path}"
@@ -164,17 +179,17 @@ class YuqueClient:
                     time.sleep(backoff)
                     continue
                 self._raise_http_error(exc.code, payload, retry_after=retry_after)
-            except urllib.error.URLError as exc:
-                if attempt < self.max_retries - 1:
-                    time.sleep(min(self.max_backoff_seconds, self.network_backoff_seconds * (2 ** attempt)))
+            except RETRYABLE_TRANSPORT_ERRORS as exc:
+                if self._retry_transport_error(attempt):
                     continue
                 raise YuqueNetworkError(str(exc)) from exc
         raise YuqueNetworkError("请求重试失败")
 
     def fetch_binary(self, url: str) -> bytes:
         """下载二进制资源内容，并复用重试与限流处理。"""
+        binary_url = _prepare_binary_url(url)
         request = urllib.request.Request(
-            url=url,
+            url=binary_url,
             method="GET",
             headers={
                 "X-Auth-Token": self.token,
@@ -184,10 +199,14 @@ class YuqueClient:
         for attempt in range(self.max_retries):
             if self.request_interval > 0:
                 time.sleep(self.request_interval)
+            self._debug(f"资源请求开始 [{attempt + 1}/{self.max_retries}] {binary_url}")
             try:
                 with self._opener.open(request, timeout=self.timeout) as response:
                     self._update_rate_limit(response.headers)
-                    return response.read()
+                    data = response.read()
+                    if _looks_like_html_response(data, response.headers.get("Content-Type")):
+                        raise YuqueValidationError(f"附件下载返回了 HTML 页面: {binary_url}")
+                    return data
             except urllib.error.HTTPError as exc:
                 self._update_rate_limit(exc.headers)
                 raw_body = exc.read().decode("utf-8", errors="replace")
@@ -198,15 +217,32 @@ class YuqueClient:
                 retry_after = self._parse_retry_after(exc.headers.get("Retry-After"))
                 if exc.code == 429 and attempt < self.max_retries - 1:
                     backoff = retry_after or min(self.max_backoff_seconds, self.rate_limit_backoff_seconds * (2 ** attempt))
+                    self._debug(
+                        f"资源请求限流，准备重试 [{attempt + 2}/{self.max_retries}] {binary_url} | 等待 {backoff:.1f}s"
+                    )
                     time.sleep(backoff)
                     continue
                 self._raise_http_error(exc.code, payload, retry_after=retry_after)
-            except urllib.error.URLError as exc:
-                if attempt < self.max_retries - 1:
-                    time.sleep(min(self.max_backoff_seconds, self.network_backoff_seconds * (2 ** attempt)))
+            except RETRYABLE_TRANSPORT_ERRORS as exc:
+                self._debug(
+                    f"资源请求异常 [{attempt + 1}/{self.max_retries}] {binary_url} | {exc.__class__.__name__}: {exc}"
+                )
+                if self._retry_transport_error(attempt):
                     continue
                 raise YuqueNetworkError(str(exc)) from exc
         raise YuqueNetworkError("资源下载重试失败")
+
+    def _retry_transport_error(self, attempt: int) -> bool:
+        """对代理/连接层瞬时异常执行统一重试，并重建 opener 避免复用坏连接。"""
+        if attempt >= self.max_retries - 1:
+            return False
+        self._opener = self._build_opener()
+        time.sleep(min(self.max_backoff_seconds, self.network_backoff_seconds * (2 ** attempt)))
+        return True
+
+    def _debug(self, message: str) -> None:
+        if self._debug_logger is not None:
+            self._debug_logger(message)
 
     def _update_rate_limit(self, headers) -> None:
         """从响应头中提取并缓存最新的限流信息。"""
@@ -299,3 +335,26 @@ def extract_data_list(payload: dict[str, Any]) -> list[dict[str, Any]]:
     if isinstance(items, list):
         return items
     return []
+
+
+def _prepare_binary_url(url: str) -> str:
+    """为语雀附件 URL 补充下载参数，避免拿到预览页 HTML。"""
+    parsed = urllib.parse.urlparse(url)
+    if "yuque.com" not in parsed.netloc.lower():
+        return url
+    if "/attachments/" not in parsed.path.lower():
+        return url
+    query = urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)
+    query_dict = {key: value for key, value in query}
+    query_dict.setdefault("download", "1")
+    new_query = urllib.parse.urlencode(query_dict)
+    return parsed._replace(query=new_query).geturl()
+
+
+def _looks_like_html_response(data: bytes, content_type: str | None) -> bool:
+    """检测错误下载到的 HTML 页面，避免将其当作附件写盘。"""
+    content_type = (content_type or "").lower()
+    if "text/html" in content_type:
+        return True
+    prefix = data[:256].lstrip().lower()
+    return prefix.startswith(b"<!doctype html") or prefix.startswith(b"<html")

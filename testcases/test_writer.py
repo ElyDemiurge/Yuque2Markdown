@@ -72,34 +72,3 @@ def test_ensure_dir_creates_nested(tmp_path):
     d = tmp_path / "a" / "b" / "c"
     ensure_dir(d)
     assert d.is_dir()
-
-
-if __name__ == "__main__":
-    import tempfile
-    import traceback
-
-    tests = [
-        obj
-        for name, obj in globals().items()
-        if name.startswith("test_") and callable(obj)
-    ]
-
-    passed = failed = 0
-    for test in tests:
-        try:
-            if "tmp_path" in test.__code__.co_varnames:
-                with tempfile.TemporaryDirectory() as tmp:
-                    test(Path(tmp))
-            else:
-                test()
-            print(f"  PASS: {test.__name__}")
-            passed += 1
-        except AssertionError as e:
-            print(f"  FAIL: {test.__name__}: {e}")
-            failed += 1
-        except Exception as e:
-            print(f"  ERROR: {test.__name__}: {e}")
-            traceback.print_exc()
-            failed += 1
-
-    print(f"\nResults: {passed} passed, {failed} failed")

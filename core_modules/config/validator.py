@@ -37,6 +37,7 @@ MAX_NAME_LENGTH = 255
 HTTPS_URL_PATTERN = re.compile(r"^https://", re.IGNORECASE)
 # repo input 中 slug 部分的白名单：只允许小写字母、数字、下划线、连字符
 SLUG_PATTERN = re.compile(r"^[a-z0-9_-]+$", re.IGNORECASE)
+ATTACHMENT_SUFFIX_PATTERN = re.compile(r"^\.[a-z0-9][a-z0-9._+-]*$", re.IGNORECASE)
 
 
 @dataclass(slots=True)
@@ -140,6 +141,12 @@ def validate_export_defaults(defaults: ExportDefaultsConfig) -> list[ValidationE
         errors.append(ValidationError("assets_dir_name", "资源目录名包含无效字符"))
     elif "/" in defaults.assets_dir_name or "\\" in defaults.assets_dir_name:
         errors.append(ValidationError("assets_dir_name", "资源目录名不能包含路径分隔符"))
+
+    for suffix in defaults.attachment_suffixes:
+        if suffix == "*":
+            continue
+        if not ATTACHMENT_SUFFIX_PATTERN.match(suffix):
+            errors.append(ValidationError("attachment_suffixes", f"附件扩展名格式无效: {suffix}"))
 
     # 校验代理配置
     errors.extend(validate_proxy(defaults.proxy))

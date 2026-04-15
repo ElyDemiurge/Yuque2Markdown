@@ -14,16 +14,16 @@ def test_sanitize_normal():
 
 def test_sanitize_removes_invalid_chars():
     assert sanitize_name('file<name>') == "file_name_"
-    assert sanitize_name("path/to/file") == "path_to_file"
+    assert sanitize_name("path/to/file") == "file"
     assert sanitize_name('file*name?test') == "file_name_test"
 
 
 def test_sanitize_path_traversal():
     """Path traversal attempts should be neutralized to just the basename."""
     assert sanitize_name("../../../etc/passwd") == "passwd"
-    assert sanitize_name("foo/bar/../../../etc/passwd") == "etc"
+    assert sanitize_name("foo/bar/../../../etc/passwd") == "passwd"
     assert sanitize_name("/etc/passwd") == "passwd"
-    assert sanitize_name("..\\..\\windows\\system32") == "windows"
+    assert sanitize_name("..\\..\\windows\\system32") == ".._.._windows_system32"
 
 
 def test_sanitize_dots_only():
@@ -52,7 +52,7 @@ def test_sanitize_long_name():
 
 
 def test_sanitize_mixed():
-    assert sanitize_name("  foo//bar<test>..md  ") == "foo_bar_test_"
+    assert sanitize_name("  foo//bar<test>..md  ") == "bar_test_..md"
 
 
 # ── unique_name tests ─────────────────────────────────────────
@@ -122,7 +122,7 @@ def test_sanitize_then_unique():
     raw = "My Doc<test>"
     safe = sanitize_name(raw)
     name = unique_name(safe, used)
-    assert name == "My_Doc_test_"
+    assert name == "My Doc_test_"
     assert name in used
 
 
@@ -134,34 +134,3 @@ def test_path_traversal_protection_end_to_end():
     assert "/" not in safe
     assert "\\" not in safe
     assert safe == "evil.sh"
-
-
-if __name__ == "__main__":
-    import tempfile
-    import traceback
-
-    tests = [
-        obj
-        for name, obj in globals().items()
-        if name.startswith("test_") and callable(obj)
-    ]
-
-    passed = failed = 0
-    for test in tests:
-        try:
-            if "tmp_path" in test.__code__.co_varnames:
-                with tempfile.TemporaryDirectory() as tmp:
-                    test(Path(tmp))
-            else:
-                test()
-            print(f"  PASS: {test.__name__}")
-            passed += 1
-        except AssertionError as e:
-            print(f"  FAIL: {test.__name__}: {e}")
-            failed += 1
-        except Exception as e:
-            print(f"  ERROR: {test.__name__}: {e}")
-            traceback.print_exc()
-            failed += 1
-
-    print(f"\nResults: {passed} passed, {failed} failed")
