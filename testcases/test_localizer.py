@@ -1,4 +1,4 @@
-"""资源本地化测试。"""
+"""资源处理测试。"""
 import sys
 sys.path.insert(0, ".")
 
@@ -179,7 +179,7 @@ def test_localize_attachment_keeps_link_and_warns_when_selected_suffix():
     )
 
     def fake_fetch(url):
-        raise AssertionError("attachment download should stay disabled")
+        raise AssertionError("Token 登录不应下载附件")
 
     import tempfile
     with tempfile.TemporaryDirectory() as d:
@@ -193,7 +193,44 @@ def test_localize_attachment_keeps_link_and_warns_when_selected_suffix():
 
     assert "https://www.yuque.com/attachments/yuque/0/2022/pdf/demo.pdf" in result.markdown
     assert result.resources[0].local_path is None
-    assert any("暂不支持下载" in warning for warning in result.warnings)
+    assert any("使用 Token 登录时无法下载附件" in warning for warning in result.warnings)
+
+
+def test_localize_attachment_downloads_selected_suffix_with_cookie():
+    render = MarkdownRenderResult(
+        markdown="[附件](https://www.yuque.com/attachments/yuque/0/2022/pdf/demo.pdf)",
+        resources=[
+            ResourceRef(
+                original_url="https://www.yuque.com/attachments/yuque/0/2022/pdf/demo.pdf",
+                normalized_url="https://www.yuque.com/attachments/yuque/0/2022/pdf/demo.pdf",
+                kind="attachment",
+                source_format="lake",
+                title="demo.pdf",
+            )
+        ],
+    )
+
+    fetched: list[str] = []
+
+    def fake_fetch(url):
+        fetched.append(url)
+        return b"%PDF-demo"
+
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        assets_dir = Path(d) / "assets"
+        result = localize_markdown_assets(
+            render,
+            assets_dir=assets_dir,
+            fetch_binary=fake_fetch,
+            attachment_suffixes=[".pdf"],
+            allow_attachment_downloads=True,
+        )
+
+    assert fetched == ["https://www.yuque.com/attachments/yuque/0/2022/pdf/demo.pdf"]
+    assert "./assets/" in result.markdown
+    assert result.resources[0].local_path is not None
+    assert result.warnings == []
 
 
 def test_localize_attachment_keeps_unselected_suffix():
@@ -225,7 +262,7 @@ def test_localize_attachment_keeps_unselected_suffix():
 
     assert "demo.docx" in result.markdown
     assert result.resources[0].local_path is None
-    assert any("暂不支持下载" in warning for warning in result.warnings)
+    assert any("使用 Token 登录时无法下载附件" in warning for warning in result.warnings)
 
 
 def test_localize_images_still_download_when_attachment_suffixes_empty():

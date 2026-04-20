@@ -8,14 +8,16 @@ from pathlib import Path
 
 from core_modules.config.models import (
     AppConfig,
+    AUTH_MODE_TOKEN,
     DEFAULT_ATTACHMENT_SUFFIXES,
     ExportDefaultsConfig,
     ProxyConfig,
     UiPreferences,
+    normalize_auth_mode,
     normalize_attachment_suffixes,
 )
 
-from core_modules.config.validator import validate_config, format_validation_errors, ValidationError
+from core_modules.config.validator import validate_config, format_validation_errors
 
 CONFIG_FILE_NAME = "yuque2markdown.config.json"
 
@@ -56,8 +58,11 @@ def load_config(base_dir: Path | None = None) -> AppConfig:
     proxy = ProxyConfig(**proxy_data) if proxy_data else ProxyConfig()
     config = AppConfig(
         version=int(data.get("version", 1)),
+        auth_mode=normalize_auth_mode(str(data.get("auth_mode", AUTH_MODE_TOKEN))),
         token=str(data.get("token", "")),
+        cookie=str(data.get("cookie", "")),
         persist_token=bool(data.get("persist_token", True)),
+        persist_cookie=bool(data.get("persist_cookie", True)),
         last_repo_input=str(data.get("last_repo_input", "")),
         export_defaults=ExportDefaultsConfig(**export_defaults, proxy=proxy),
         ui_preferences=UiPreferences(**ui_preferences),
@@ -73,12 +78,6 @@ def load_config(base_dir: Path | None = None) -> AppConfig:
 
     return config
 
-
-def validate_config_on_save(config: AppConfig) -> list[ValidationError]:
-    """保存前执行配置校验，并返回全部校验错误。"""
-    return validate_config(config)
-
-
 def save_config(config: AppConfig, base_dir: Path | None = None, *, validate: bool = True) -> Path:
     if validate:
         errors = validate_config(config)
@@ -93,5 +92,7 @@ def save_config(config: AppConfig, base_dir: Path | None = None, *, validate: bo
     )
     if not config.persist_token:
         payload["token"] = ""
+    if not config.persist_cookie:
+        payload["cookie"] = ""
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     return path

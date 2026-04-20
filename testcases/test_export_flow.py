@@ -105,7 +105,7 @@ def test_export_repo_reports_progress_events(tmp_path: Path) -> None:
     assert result.exported_docs == 2
     assert snapshots
     assert snapshots[0].total_docs == 2
-    assert any(snapshot.current_stage == "离线化图片和附件" for snapshot in snapshots)
+    assert any(snapshot.current_stage == "下载图片并执行附件本地化" for snapshot in snapshots)
     assert any(snapshot.active_tasks for snapshot in snapshots)
     assert any(snapshot.waiting_preview for snapshot in snapshots[:-1])
     assert snapshots[-1].current_stage == "已完成"
@@ -168,7 +168,7 @@ def test_export_repo_emits_attachment_warning_without_download_failure(tmp_path:
 
     assert result.exported_docs == 1
     assert any(
-        "官方 API 暂不支持下载，已保留原始链接" in warning
+        "使用 Token 登录时无法下载附件" in warning
         for snapshot in snapshots
         for warning in snapshot.new_warnings
     )
@@ -195,3 +195,34 @@ def test_export_repo_logs_failure_on_exception(tmp_path: Path) -> None:
     content = log_path.read_text(encoding="utf-8")
     assert "导出失败" in content
     assert "boom" in content
+
+
+def test_export_repo_warns_when_selected_docs_do_not_match_actual_queue(tmp_path: Path) -> None:
+    snapshots: list[ProgressSnapshot] = []
+
+    def on_progress(snapshot: ProgressSnapshot) -> None:
+        snapshots.append(
+            ProgressSnapshot(
+                total_docs=snapshot.total_docs,
+                warning_count=snapshot.warning_count,
+                latest_warning=snapshot.latest_warning,
+                new_warnings=list(snapshot.new_warnings),
+                details=dict(snapshot.details),
+            )
+        )
+
+    exporter = Exporter(FakeClient(), progress_callback=on_progress)
+    repo = RepoRef(group_login="cyberangel", book_slug="rg9gdm")
+    options = ExportOptions(
+        repo_input="cyberangel/rg9gdm",
+        output_dir=tmp_path,
+        request_interval=0,
+        selected_doc_ids={11, 12, 13},
+    )
+
+    result = exporter.export_repo(repo, options)
+
+    assert result.exported_docs == 2
+    assert any("实际可导出 2 篇" in (snapshot.latest_warning or "") for snapshot in snapshots)
+    log_path = tmp_path / "测试库" / "export.log"
+    assert "实际可导出 2 篇" in log_path.read_text(encoding="utf-8")

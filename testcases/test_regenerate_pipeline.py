@@ -1,4 +1,4 @@
-"""导出与根据 .lake 重新写出 Markdown 文件的共用流程测试。"""
+"""导出与根据 .lake 重新生成 Markdown 的共用流程测试。"""
 
 import sys
 import json
@@ -141,3 +141,37 @@ def test_regenerate_all_keeps_attachment_link_even_if_local_asset_exists(tmp_pat
     content = md_file.read_text(encoding="utf-8")
     assert attachment_url in content
     assert existing_asset.exists()
+
+
+def test_regenerate_all_writes_empty_lake_file_for_empty_lake_doc(tmp_path: Path, monkeypatch) -> None:
+    output_root = tmp_path / "output"
+    doc_dir = output_root / "Repo" / "Doc"
+    doc_dir.mkdir(parents=True)
+    json_file = doc_dir / "Doc.yuque.json"
+    md_file = doc_dir / "Doc.md"
+    lake_file = doc_dir / "Doc.lake"
+    lake_file.write_text("", encoding="utf-8")
+    json_file.write_text(json.dumps({"data": {"title": "Doc", "slug": "doc", "format": "lake", "body_lake": ""}}), encoding="utf-8")
+
+    class DummyClient:
+        def fetch_binary(self, url: str) -> bytes:
+            raise AssertionError("should not fetch")
+
+    class DummyConfig:
+        def __init__(self):
+            from core_modules.config.models import AppConfig
+
+            self._config = AppConfig()
+            self._config.export_defaults.output_dir = str(output_root)
+            self._config.export_defaults.offline_assets = True
+
+        def __getattr__(self, name):
+            return getattr(self._config, name)
+
+    monkeypatch.setattr(regenerate_md, "load_config", lambda: DummyConfig())
+    monkeypatch.setattr(regenerate_md, "_build_regenerate_client", lambda config: DummyClient())
+    monkeypatch.setattr(regenerate_md, "_collect_doc_entries", lambda output_root: [(lake_file, json_file, md_file)])
+
+    assert regenerate_md.regenerate_all() == 0
+    assert lake_file.exists()
+    assert lake_file.read_text(encoding="utf-8") == ""

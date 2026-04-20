@@ -30,25 +30,3 @@ def count_docs(nodes) -> int:
             total += 1
         total += count_docs(getattr(node, "children", []))
     return total
-
-
-def reset_connection_related_state(session: SessionState) -> None:
-    """重置依赖连接状态的运行时字段。"""
-    session.connection_ok = False
-    session.current_user_label = "未检查"
-    session.network_test_message = ""
-
-
-def mark_token_changed(session: SessionState, has_token: bool) -> None:
-    """Token 变更后，同步刷新会话状态。"""
-    reset_connection_related_state(session)
-    session.last_error_text = ""
-    session.token_status_message = "已重新设置 Token，请手动刷新" if has_token else "Token 已清空"
-
-
-def mark_network_config_changed(session: SessionState) -> None:
-    """网络配置变更后，同步刷新会话状态。"""
-    session.network_test_message = ""
-    session.last_error_text = ""
-    session.token_status_message = "网络配置已修改，请重新测试"
-    session.dirty = True

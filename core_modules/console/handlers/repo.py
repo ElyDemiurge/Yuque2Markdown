@@ -1,6 +1,6 @@
 """知识库与文档选择处理器。"""
 
-from core_modules.config.models import AppConfig, SessionState
+from core_modules.config.models import AppConfig, SessionState, active_auth_value, auth_mode_label, normalize_auth_mode
 from core_modules.console.helpers import filter_repos
 from core_modules.console.menu import show_message, run_select_list
 from core_modules.console.state.manager import build_selected_docs_text, count_docs
@@ -15,6 +15,24 @@ def _reset_doc_selection(session: SessionState, total_docs: int = 0) -> None:
     session.selected_doc_count = total_docs
 
 
+def _repo_owner_login(repo: dict) -> str:
+    user = repo.get("user") or {}
+    login = str(user.get("login") or "").strip()
+    if login:
+        return login
+    namespace = str(repo.get("namespace") or "").strip()
+    if "/" in namespace:
+        return namespace.split("/", 1)[0]
+    return ""
+
+
+def _unsupported_shared_repo(repo: dict, current_user_login: str) -> bool:
+    if not current_user_login:
+        return False
+    owner_login = _repo_owner_login(repo)
+    return bool(owner_login and owner_login != current_user_login)
+
+
 def handle_repo_input_inline(
     config: AppConfig,
     session: SessionState,
@@ -23,17 +41,21 @@ def handle_repo_input_inline(
     build_client_from_config,
 ) -> bool:
     """校验并处理用户手动输入的知识库。"""
-    token = (config.token or "").strip()
+    credential = active_auth_value(config)
+    label = auth_mode_label(normalize_auth_mode(config.auth_mode))
     if not session.connection_ok:
-        session.token_status_message = "Token 无效，无法校验知识库"
-        show_message("Token 无效", ["请先设置有效 Token 并刷新连接状态。"])
+        session.token_status_message = f"{label} 无效，无法校验知识库"
+        show_message(f"{label} 无效", [f"请先设置有效 {label} 并刷新连接状态。"])
         return False
     try:
-        client = build_client_from_config(config, token)
+        client = build_client_from_config(config, credential)
         repo, toc_tree = fetch_repo_toc(client, value)
     except Exception as exc:
         session.status_message = f"知识库校验失败: {exc}"
         show_message("知识库校验失败", [str(exc)])
+        return False
+    if session.current_user_login and repo.group_login != session.current_user_login:
+        show_message("暂不支持导出", ["当前项目仅支持导出当前账号自己的个人知识库。", "非当前登录账号的知识库暂不支持导出，如受邀协作知识库。"])
         return False
     previous_repo = session.repo_input
     session.repo_input = f"{repo.group_login}/{repo.book_slug}"
@@ -60,16 +82,27 @@ def handle_repo_selection(
     """处理“从列表选择知识库”动作。"""
     if not repos:
         session.status_message = "暂无可选知识库，请先刷新连接"
-        show_message("暂无可选知识库", ["请先刷新连接状态，确认 token 有效且账号有可访问仓库。"])
+        show_message("暂无可选知识库", ["请先刷新连接状态，确认登录凭据有效且账号有可访问仓库。"])
         return False
     filtered_repos = filter_repos(repos, session.repo_filter)
-    repo_lines = [f"{repo.get('name')} | https://www.yuque.com/{repo.get('namespace')}" for repo in filtered_repos]
+    disabled_indexes = {
+        index
+        for index, repo in enumerate(filtered_repos)
+        if _unsupported_shared_repo(repo, session.current_user_login)
+    }
+    repo_lines = []
+    for repo in filtered_repos:
+        line = f"{repo.get('name')} | https://www.yuque.com/{repo.get('namespace')}"
+        if _unsupported_shared_repo(repo, session.current_user_login):
+            line += "  （非当前登录账号的知识库暂不支持导出，如受邀协作知识库）"
+        repo_lines.append(line)
     index, filter_text = run_select_list(
         "选择知识库",
         repo_lines,
         initial_index=session.repo_list_index,
         filter_text=session.repo_filter,
         empty_message="当前过滤条件下没有匹配的知识库",
+        disabled_indexes=disabled_indexes,
     )
     session.repo_filter = filter_text
     if index is None:
@@ -88,10 +121,10 @@ def handle_repo_selection(
     session.repo_url = f"https://www.yuque.com/{namespace}"
     if session.repo_input != previous_repo:
         total_docs = 0
-        token = (config.token or "").strip()
-        if session.connection_ok and token:
+        credential = active_auth_value(config)
+        if session.connection_ok and credential:
             try:
-                client = build_client_from_config(config, token)
+                client = build_client_from_config(config, credential)
                 _, toc_tree = fetch_repo_toc(client, session.repo_input)
                 total_docs = count_docs(toc_tree)
             except Exception:
@@ -110,16 +143,17 @@ def handle_doc_selection(
     build_client_from_config,
 ) -> tuple[str, bool]:
     """进入目录树选择器并更新文档选择结果。"""
-    token = (config.token or "").strip()
+    credential = active_auth_value(config)
+    label = auth_mode_label(normalize_auth_mode(config.auth_mode))
     if not session.connection_ok:
-        session.token_status_message = "Token 无效，无法读取目录"
-        show_message("Token 无效", ["请先设置有效 Token 并刷新连接状态。"])
+        session.token_status_message = f"{label} 无效，无法读取目录"
+        show_message(f"{label} 无效", [f"请先设置有效 {label} 并刷新连接状态。"])
         return rate_limit_summary, False
     if not session.repo_input:
         session.status_message = "请先设置知识库"
         show_message("缺少知识库", ["请先手动输入知识库，或从列表选择知识库。"])
         return rate_limit_summary, False
-    client = build_client_from_config(config, token)
+    client = build_client_from_config(config, credential)
     _, toc_tree = fetch_repo_toc(client, session.repo_input)
     summary_lines = [
         f"知识库: {session.repo_display_name or session.repo_namespace or session.repo_input}",

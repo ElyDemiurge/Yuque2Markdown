@@ -2,6 +2,7 @@
 
 from core_modules.console.helpers import parse_action
 from core_modules.config.models import AppConfig, SessionState
+from core_modules.config.models import active_auth_value
 from core_modules.console.menu import MenuItem, run_menu, show_message
 
 
@@ -112,7 +113,7 @@ class AdvancedSettingsController:
             self.session.network_test_message = "代理未配置，请先设置代理地址"
             return
         try:
-            client = self.build_client_from_config(self.config, self.config.token or "")
+            client = self.build_client_from_config(self.config, active_auth_value(self.config))
             success, message = client.test_proxy()
             if success:
                 self.session.network_test_message = "代理测试成功"
@@ -124,7 +125,7 @@ class AdvancedSettingsController:
     def _handle_test_direct_connection(self) -> None:
         """测试直连网络状态。"""
         try:
-            client = self.build_client_from_config(self.config, self.config.token or "")
+            client = self.build_client_from_config(self.config, active_auth_value(self.config))
             success, message = client.test_direct_connection()
             if success:
                 self.session.network_test_message = "网络正常"

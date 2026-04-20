@@ -12,7 +12,16 @@ if TYPE_CHECKING:
 
 
 DEFAULT_ATTACHMENT_SUFFIXES = ["*"]
+AUTH_MODE_TOKEN = "token"
+AUTH_MODE_COOKIE = "cookie"
+AUTH_MODES = {AUTH_MODE_TOKEN, AUTH_MODE_COOKIE}
 _ATTACHMENT_SUFFIX_SPLIT_RE = re.compile(r"[\s,，;；]+")
+
+
+def normalize_auth_mode(value: str | None) -> str:
+    """规范化登录方式。"""
+    text = (value or "").strip().lower()
+    return text if text in AUTH_MODES else AUTH_MODE_TOKEN
 
 
 def normalize_attachment_suffixes(values: list[str] | tuple[str, ...] | set[str] | str | None) -> list[str]:
@@ -23,8 +32,7 @@ def normalize_attachment_suffixes(values: list[str] | tuple[str, ...] | set[str]
     - `[]` 表示当前不下载任何附件，仅保留远程链接
     - 其他值按扩展名列表处理，例如 `[".pdf", ".mp4"]`
 
-    当前版本中，这些配置主要用于保留附件下载相关配置字段；
-    工具会下载 Markdown 中的图片资源，但不会下载语雀附件。
+    使用 Token 登录时不下载语雀附件；使用 Cookie 登录时按扩展名配置下载附件。
     """
     if values is None:
         return list(DEFAULT_ATTACHMENT_SUFFIXES)
@@ -58,7 +66,7 @@ def summarize_attachment_suffixes(values: list[str] | tuple[str, ...] | set[str]
     """将附件扩展名配置格式化为可展示文本。"""
     normalized = normalize_attachment_suffixes(values)
     if normalized == DEFAULT_ATTACHMENT_SUFFIXES:
-        return "全部附件（当前仍保留原始链接）"
+        return "全部附件"
     if not normalized:
         return "不下载附件"
     return ", ".join(normalized)
@@ -103,10 +111,13 @@ class UiPreferences:
 
 @dataclass(slots=True)
 class AppConfig:
-    """聚合持久化配置文件中的全部设置。"""
+    """配置文件中的全部设置。"""
     version: int = 1
+    auth_mode: str = AUTH_MODE_TOKEN
     token: str = ""
+    cookie: str = ""
     persist_token: bool = True
+    persist_cookie: bool = True
     last_repo_input: str = ""
     export_defaults: ExportDefaultsConfig = field(default_factory=ExportDefaultsConfig)
     ui_preferences: UiPreferences = field(default_factory=UiPreferences)
@@ -126,6 +137,7 @@ class SessionState:
     last_exported_docs: int = 0
     last_result_summary: list[str] = field(default_factory=list)
     current_user_label: str = "未检查"
+    current_user_login: str = ""
     status_message: str = "准备就绪"
     last_warning_message: str = ""
     last_error_text: str = ""
@@ -138,6 +150,18 @@ class SessionState:
     token_status_message: str = ""  # Token 连接状态（刷新成功/失败/需刷新/限流）
     config_status_message: str = ""  # 配置更新提示（已更新输出目录等）
     network_test_message: str = ""  # 网络测试结果
+
+
+def active_auth_value(config: AppConfig) -> str:
+    """返回当前登录方式对应的凭据。"""
+    if normalize_auth_mode(config.auth_mode) == AUTH_MODE_COOKIE:
+        return (config.cookie or "").strip()
+    return (config.token or "").strip()
+
+
+def auth_mode_label(auth_mode: str) -> str:
+    """返回登录方式的界面文案。"""
+    return "Cookie" if normalize_auth_mode(auth_mode) == AUTH_MODE_COOKIE else "Token"
 
 
 def build_export_options(config: AppConfig, repo_input: str, selected_doc_ids: set[int] | None = None) -> ExportOptions:
@@ -155,4 +179,5 @@ def build_export_options(config: AppConfig, repo_input: str, selected_doc_ids: s
         assets_dir_name=defaults.assets_dir_name,
         fail_on_asset_error=defaults.fail_on_asset_error,
         attachment_suffixes=normalize_attachment_suffixes(defaults.attachment_suffixes),
+        allow_attachment_downloads=normalize_auth_mode(config.auth_mode) == AUTH_MODE_COOKIE,
     )

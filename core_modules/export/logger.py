@@ -33,7 +33,7 @@ class ExportLogger:
         elapsed = self._elapsed()
         self._write("INFO", f"导出完成 | 成功: {exported} | 跳过: {skipped} | 失败: {failed} | "
             f"警告: {warnings} | 资源: 下载 {resources_downloaded} / 失败 {resources_failed} | "
-            f"重写内部链接: {rewritten_links} | 耗时: {elapsed:.1f}s")
+            f"改写内部链接: {rewritten_links} | 耗时: {elapsed:.1f}s")
 
     def export_failed(self, reason: str) -> None:
         elapsed = self._elapsed()
@@ -59,7 +59,7 @@ class ExportLogger:
         if failed > 0:
             parts.append(f"失败: {failed}")
         if rewritten > 0:
-            parts.append(f"重写: {rewritten}")
+            parts.append(f"改写: {rewritten}")
         parts.append(f"耗时: {elapsed:.1f}s")
         self._write("INFO", " | ".join(parts))
 

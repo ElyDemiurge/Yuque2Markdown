@@ -53,7 +53,7 @@ class RuntimeSettingsController:
                 self._handle_max_backoff(edited_value)
             elif key == "max_docs" and edited_value is not None:
                 self._handle_max_docs(edited_value)
-            elif key in {"confirm_before_export", "auto_save_after_export", "persist_token"}:
+            elif key in {"confirm_before_export", "auto_save_after_export", "persist_token", "persist_cookie"}:
                 self._handle_toggle(key)
 
     def _build_menu_items(self) -> list[MenuItem]:
@@ -74,6 +74,7 @@ class RuntimeSettingsController:
             MenuItem("confirm_before_export", "导出前显示确认对话框", self._bool_text(self.config.ui_preferences.confirm_before_export), item_type="bool"),
             MenuItem("auto_save_after_export", "导出后自动保存配置", self._bool_text(self.config.ui_preferences.auto_save_after_export), item_type="bool"),
             MenuItem("persist_token", "保存 Token 到配置文件", self._bool_text(self.config.persist_token), item_type="bool"),
+            MenuItem("persist_cookie", "保存 Cookie 到配置文件", self._bool_text(self.config.persist_cookie), item_type="bool"),
         ]
 
     def _build_status_lines(self) -> list[str]:
@@ -167,6 +168,7 @@ class RuntimeSettingsController:
             "confirm_before_export": "导出前确认",
             "auto_save_after_export": "导出后自动保存配置",
             "persist_token": "保存 Token 到配置文件",
+            "persist_cookie": "保存 Cookie 到配置文件",
         }
         self.session.status_message = f"已更新{label_map.get(key, key)}"
         self.session.dirty = True

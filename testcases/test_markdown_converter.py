@@ -68,7 +68,14 @@ def test_lake_link():
 
 def test_lake_missing_body_lake_warns():
     result = render_doc_markdown({"title": "测试", "format": "lake", "body_lake": ""})
-    assert "缺少 body_lake" in result.warnings[0]
+    assert "文档正文为空" in result.warnings[0]
+
+
+def test_lake_placeholder_only_warns_empty_instead_of_fallback():
+    body_lake = '<!doctype lake><meta name="doc-version" content="1" /><p><cursor /><br /></p>'
+    result = render_doc_markdown({"title": "测试", "format": "lake", "body_lake": body_lake, "content": body_lake})
+    assert any("文档正文为空或只包含占位内容" in warning for warning in result.warnings)
+    assert not any("已回退到 content 字段" in warning for warning in result.warnings)
 
 
 def test_lake_unknown_card_warns():
@@ -395,6 +402,17 @@ def test_external_urls_not_downloaded():
     resources = collect_resources(markdown, "lake")
     kinds = {r.kind for r in resources}
     assert "attachment" not in kinds
+
+
+def test_collect_resources_ignores_urls_in_fenced_code_block():
+    markdown = """
+```html
+<img src="http://127.0.0.1/img/3.jpg">
+<a href="https://example.com/file.pdf">link</a>
+```
+""".strip()
+    resources = collect_resources(markdown, "lake")
+    assert resources == []
 
 
 def test_lake_strips_invalid_xml_control_chars():

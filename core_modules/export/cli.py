@@ -14,6 +14,8 @@ from core_modules.export.toc_builder import build_toc_tree
 def build_client(
     token: str,
     *,
+    cookie: str = "",
+    auth_mode: str = "token",
     request_interval: float,
     timeout: int = DEFAULT_TIMEOUT,
     max_retries: int = 5,
@@ -26,6 +28,8 @@ def build_client(
 ) -> YuqueClient:
     return YuqueClient(
         token=token,
+        cookie=cookie,
+        auth_mode=auth_mode,
         request_interval=request_interval,
         timeout=timeout,
         max_retries=max_retries,
@@ -74,5 +78,7 @@ def list_accessible_repos(client: YuqueClient) -> tuple[dict, list[dict]]:
     login = user.get("login")
     if not login:
         raise ValueError("无法获取当前用户 login")
+    if getattr(client, "auth_mode", "") == "cookie":
+        return user, client.get_web_books()
     repos = client.request("GET", f"/users/{login}/repos", {"limit": 100, "offset": 0}).get("data", [])
     return user, repos

@@ -3,10 +3,19 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 
-from core_modules.config.models import AppConfig, SessionState
+from core_modules.config.models import (
+    AUTH_MODE_COOKIE,
+    AUTH_MODE_TOKEN,
+    AppConfig,
+    SessionState,
+    active_auth_value,
+    auth_mode_label,
+    normalize_auth_mode,
+)
 from core_modules.config.store import load_config
+from core_modules.browser_cookies import load_yuque_cookie_from_browsers
 from core_modules.console.helpers import parse_action
-from core_modules.console.menu import MenuItem, run_menu, show_message
+from core_modules.console.menu import InlineChoice, MenuItem, run_menu, show_message
 from core_modules.export.cli import build_client
 from core_modules.export.cli import list_accessible_repos
 from core_modules.export.errors import YuqueRateLimitError
@@ -27,12 +36,14 @@ def run_console_app() -> int:
     repos: list[dict] = []
     _append_console_log("进入控制台")
 
-    token = (config.token or "").strip()
-    if token:
-        config.token = token
-        session.token_status_message = "已加载 Token，请刷新 Token 状态"
+    config.auth_mode = normalize_auth_mode(config.auth_mode)
+    credential = active_auth_value(config)
+    if credential:
+        config.token = (config.token or "").strip()
+        config.cookie = (config.cookie or "").strip()
+        session.token_status_message = f"已加载 {auth_mode_label(config.auth_mode)}，请刷新连接状态"
     else:
-        session.token_status_message = "未设置 Token"
+        session.token_status_message = f"未设置 {auth_mode_label(config.auth_mode)}"
 
     while True:
         title = _build_main_title(session)
@@ -83,7 +94,30 @@ def run_console_app() -> int:
         key, edited_value = parse_action(action)
         _remember_menu_index(session, MAIN_MENU_KEY, items, key)
         if key == "refresh_connection":
-            _refresh_connection_state((config.token or "").strip(), config, session, interactive=True)
+            _refresh_connection_state(active_auth_value(config), config, session, interactive=True)
+            continue
+        if key in {"auth_mode_token", "auth_mode_cookie"}:
+            new_mode = AUTH_MODE_COOKIE if key == "auth_mode_cookie" else AUTH_MODE_TOKEN
+            if config.auth_mode != new_mode:
+                config.auth_mode = new_mode
+                session.connection_ok = False
+                session.current_user_label = "未检查"
+                session.last_error_text = ""
+                session.network_test_message = ""
+                session.token_status_message = f"已切换为 {auth_mode_label(new_mode)} 登录，请刷新连接状态"
+                if new_mode == AUTH_MODE_COOKIE and not (config.cookie or "").strip():
+                    result = load_yuque_cookie_from_browsers()
+                    if result.ok:
+                        config.cookie = result.cookie
+                        config.persist_cookie = True
+                        session.token_status_message = f"{result.message}，请刷新连接状态"
+                    else:
+                        session.token_status_message = result.message
+                        show_message("读取 Cookie 失败", [result.message])
+                session.dirty = True
+                repos = []
+                rate_limit_summary = "暂无"
+                config = _persist_config(config, session, "auth_mode_changed")
             continue
         if key == "token":
             if edited_value is not None:
@@ -92,7 +126,7 @@ def run_console_app() -> int:
                 session.network_test_message = ""  # 清空网络测试结果
                 session.last_error_text = ""  # 清空错误详情
                 if config.token:
-                    session.token_status_message = "已重新设置 Token，请手动刷新"
+                    session.token_status_message = "已重新设置 Token，请刷新连接状态"
                 else:
                     session.token_status_message = "Token 已清空"
                 session.dirty = True
@@ -101,10 +135,30 @@ def run_console_app() -> int:
             rate_limit_summary = "暂无"
             session.connection_ok = False
             continue
+        if key == "import_cookie":
+            result = load_yuque_cookie_from_browsers()
+            if result.ok:
+                config.auth_mode = AUTH_MODE_COOKIE
+                config.cookie = result.cookie
+                config.persist_cookie = True
+                session.connection_ok = False
+                session.current_user_label = "未检查"
+                session.last_error_text = ""
+                session.network_test_message = ""
+                session.token_status_message = f"{result.message}，请刷新连接状态"
+                session.dirty = True
+                repos = []
+                rate_limit_summary = "暂无"
+                config = _persist_config(config, session, "cookie_imported")
+            else:
+                session.token_status_message = result.message
+                show_message("读取 Cookie 失败", [result.message])
+            continue
         if key == "clear_token":
             config.token = ""
+            config.cookie = ""
             session.current_user_label = "未检查"
-            session.token_status_message = "Token 已清空"
+            session.token_status_message = "登录凭据已清空"
             session.connection_ok = False
             session.repo_display_name = ""
             session.repo_namespace = ""
@@ -155,7 +209,7 @@ def run_console_app() -> int:
 
 def _build_client_from_config(
     config: AppConfig,
-    token: str,
+    credential: str,
     *,
     timeout: int | None = None,
     max_retries: int | None = None,
@@ -166,8 +220,13 @@ def _build_client_from_config(
     defaults = config.export_defaults
     proxy = defaults.proxy
     proxy_host = proxy.host or None if proxy.enabled else None
+    auth_mode = normalize_auth_mode(config.auth_mode)
+    token = credential if auth_mode == AUTH_MODE_TOKEN else (config.token or "").strip()
+    cookie = credential if auth_mode == AUTH_MODE_COOKIE else (config.cookie or "").strip()
     return build_client(
         token,
+        cookie=cookie,
+        auth_mode=auth_mode,
         request_interval=defaults.request_interval,
         timeout=defaults.timeout if timeout is None else timeout,
         max_retries=defaults.request_max_retries if max_retries is None else max_retries,
@@ -238,14 +297,28 @@ def _build_main_title(session: SessionState) -> str:
 
 def _build_main_menu_items(config: AppConfig, session: SessionState, rate_limit_summary: str) -> list[MenuItem]:
     has_token = bool((config.token or "").strip())
+    has_cookie = bool((config.cookie or "").strip())
+    auth_mode = normalize_auth_mode(config.auth_mode)
     items = [
         MenuItem("connection_section", "── 连接 ──", item_type="section", focusable=False),
         MenuItem("current_user", "当前用户", session.current_user_label if session.connection_ok else "未登录", item_type="readonly", focusable=False),
-        MenuItem("refresh_connection", "刷新 Token 状态", item_type="action"),
-        MenuItem("token", "设置 Token", _mask_token(config.token) if has_token else "未设置", input_style=True, edit_value=config.token or ""),
-        MenuItem("clear_token", "清空 Token", item_type="action"),
+        MenuItem(
+            "auth_mode",
+            "登录方式: ",
+            inline_choices=[
+                InlineChoice("auth_mode_cookie", "浏览器 Cookie", checked=auth_mode == AUTH_MODE_COOKIE),
+                InlineChoice("auth_mode_token", "Token", checked=auth_mode == AUTH_MODE_TOKEN),
+            ],
+            inline_selected_index=0 if auth_mode == AUTH_MODE_COOKIE else 1,
+        ),
+        MenuItem("refresh_connection", f"刷新 {auth_mode_label(auth_mode)} 状态", item_type="action"),
+        MenuItem("clear_token", "清空登录凭据", item_type="action"),
         MenuItem("repo_section", "── 知识库与文档 ──", item_type="section", focusable=False),
     ]
+    if auth_mode == AUTH_MODE_TOKEN:
+        items.insert(3, MenuItem("token", "设置 Token", _mask_token(config.token) if has_token else "未设置", input_style=True, edit_value=config.token or ""))
+    else:
+        items.insert(3, MenuItem("import_cookie", "从浏览器或配置文件加载 Cookie", "已加载" if has_cookie else "未加载", item_type="action"))
     if session.connection_ok:
         repo_display = session.repo_namespace or session.repo_input or config.last_repo_input
         items.extend(
@@ -256,7 +329,7 @@ def _build_main_menu_items(config: AppConfig, session: SessionState, rate_limit_
             ]
         )
     else:
-        items.append(MenuItem("repo_empty", "当前未连接，设置有效 Token 后可选择知识库", item_type="readonly", focusable=False))
+        items.append(MenuItem("repo_empty", "当前未连接，设置有效 Token 或 Cookie 后可选择知识库", item_type="readonly", focusable=False))
     items.extend(
         [
             MenuItem("export_section", "── 导出配置 ──", item_type="section", focusable=False),

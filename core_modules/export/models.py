@@ -68,6 +68,7 @@ class ExportOptions:
     assets_dir_name: str = "assets"
     fail_on_asset_error: bool = False
     attachment_suffixes: list[str] = field(default_factory=lambda: ["*"])
+    allow_attachment_downloads: bool = False
 
 
 @dataclass(slots=True)
@@ -121,7 +122,7 @@ class ProgressSnapshot:
 
 @dataclass(slots=True)
 class CheckpointState:
-    """导出断点状态，写入 JSON 持久化。"""
+    """导出断点状态，保存为 JSON。"""
     repo: dict[str, str | int | None]
     export_started_at: str
     completed_doc_ids: list[int] = field(default_factory=list)

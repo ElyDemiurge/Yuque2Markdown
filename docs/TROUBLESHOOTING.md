@@ -4,12 +4,12 @@
 
 这份文档主要覆盖：
 
-- Token 无效或无法访问语雀 API
+- Token 无效、Cookie 无效或无法访问语雀
 - 代理配置错误或网络不可达
 - 导出过程中资源下载失败
 - Lake 转 Markdown 时出现警告或异常
 - 导出中断后如何恢复
-- 转换逻辑修复后如何批量根据 `.lake` 重新写出 Markdown 文件
+- 转换逻辑修复后如何批量根据 `.lake` 重新生成 Markdown
 
 想快速开始先看 [../README.md](../README.md)；定位测试失败时再配合 [TESTING.md](TESTING.md)。
 
@@ -20,7 +20,7 @@
 - `output/<知识库>/export.log`
   导出过程的主日志，包含每篇文档的开始、转换、资源下载、完成、警告和错误。
 - `output/<知识库>/regenerate.log`
-  重新写出 Markdown 文件的日志。执行 `python regenerate_md.py` 后生成或追加。
+  重新生成 Markdown 的日志。执行 `python regenerate_md.py` 后生成或追加。
   如果本地已有 `assets/`，脚本会优先复用这些图片并改写 Markdown 链接。
 - `output/<知识库>/_export_checkpoint.json`
   导出断点文件，用于记录已完成、失败和处理中状态。
@@ -36,21 +36,27 @@
 2. 再看具体文档目录下的 `.md`、`.lake` 和 `.yuque.json` 是否一致。
 3. 最后再回到代码和测试定位具体模块。
 
-## Token 或连接失败
+## Token、Cookie 或连接失败
 
 ### 常见表现
 
-- 控制台提示 Token 无效
+- 控制台提示 Token 或 Cookie 无效
 - 无法读取知识库列表
 - API 请求返回未授权或连接失败
 
 ### 排查步骤
 
-1. 确认 Token 是否来自语雀“账户设置” -> “Token 管理”。
-2. 确认 Token 没有多余空格或换行。
-3. 在控制台中重新执行连接测试或刷新 Token 状态。
-4. 如果同时配置了代理，优先确认代理是否真的可用。
-5. 如果近期更换了 Token，记得保存配置后再重新进入相关菜单。
+1. 如果使用 Token 登录，先确认 Token 是否来自语雀“账户设置” -> “Token 管理”。
+2. 如果使用 Cookie 登录，先用“从浏览器读取 Cookie”重新获取一次。
+3. 确认 Token 或 Cookie 没有被清空。
+4. 在控制台中重新执行连接测试或刷新连接状态。
+5. 如果同时配置了代理，优先确认代理是否真的可用。
+
+补充说明：
+
+- 当前项目仅支持个人语雀知识库导出。
+- 非当前登录账号的知识库暂不支持导出，如受邀协作知识库。
+- 如果某本知识库在列表里是灰色的，说明它不属于当前登录账号，当前版本不能导出。
 
 ### 进一步定位
 
@@ -59,6 +65,7 @@
 - 当前网络是否能访问语雀
 - 是否有公司代理、本地代理或抓包工具影响 HTTPS 请求
 - 是否触发了限流，而不是鉴权失败
+- Windows 下的浏览器 Cookie 自动获取暂未实机测试；如果你在 Windows 上遇到问题，先检查配置文件里的 Cookie 是否已成功保存
 
 ## 代理配置错误或网络异常
 
@@ -75,7 +82,7 @@
 2. 如果配置了 `test_url`，优先使用 HTTPS 地址。
 3. 不确定代理状态时，先暂时关闭代理再测试一次。
 4. 如果只有资源下载失败，而文档 API 正常，说明问题可能出在资源域名访问而不是 API 访问。
-5. 如果只有语雀附件没有被下载，而图片正常，这通常不是故障，而是当前版本的预期行为。
+5. 如果使用 Token 登录，语雀附件不会下载；这是当前版本的预期行为。
 
 ### 建议
 
@@ -119,9 +126,9 @@
 ### 建议
 
 - 单个外部 URL 失败时，先确认它是否真的需要下载到本地。
-- 当前版本会下载 Markdown 中的图片资源，但不会下载语雀附件；语雀附件链接会保留在 Markdown 中。
+- 使用 Token 登录时，语雀附件会保留原始链接；使用 Cookie 登录时可按扩展名下载附件。
 - 批量图片失败时，优先检查代理和网络环境。
-- 如果 Markdown 已生成但资源没本地化，可重点查看 `localizer.py` 并运行对应测试。
+- 如果 Markdown 已生成但图片链接没有改成本地路径，可重点查看 `localizer.py` 并运行对应测试。
 
 ## Lake 转 Markdown 出现警告
 
@@ -130,15 +137,15 @@
 `export.log` 中会出现类似警告：
 
 ```text
-Lake 转换遇到未专门处理的标签: <tag>
+Lake 转换遇到未处理的标签: <tag>
 HTML 表格解析失败
 未支持 card 类型: xxx
 ```
 
 ### 说明
 
-- `未专门处理的标签`
-  通常表示原始 Lake 中出现了转换器未显式处理的 HTML/Lake 标签。
+- `未处理的标签`
+  通常表示原始 Lake 中出现了转换器尚未支持的 HTML/Lake 标签。
 - `HTML 表格解析失败`
   通常与表格 card 中的 HTML 结构、void 元素、自定义属性或转义内容有关。
 - `未支持 card 类型`
@@ -164,7 +171,7 @@ python -m pytest testcases/test_localizer.py testcases/test_export_flow.py
 ### 实用建议
 
 - Lake 相关问题优先写最小复现测试，不要直接依赖完整导出样本。
-- 如果只修了转换逻辑，可用 `regenerate_md.py` 根据 `.lake` 重新写出 Markdown 文件，不必重新拉取全部文档。
+- 如果只修了转换逻辑，可用 `regenerate_md.py` 根据 `.lake` 重新生成 Markdown，不必重新拉取全部文档。
 
 ## 导出中断后如何恢复
 
@@ -199,7 +206,7 @@ _export_checkpoint.json
 
 只有在确认断点文件异常、且接受重新导出时，才建议删除它。默认应优先保留。
 
-## 什么时候使用 `regenerate_md.py` 根据 `.lake` 重新写出 Markdown 文件
+## 什么时候使用 `regenerate_md.py` 根据 `.lake` 重新生成 Markdown
 
 适合这些场景：
 
@@ -217,7 +224,7 @@ python regenerate_md.py
 
 - 遍历 `output/` 下的 `.lake` 文件
 - 找到同目录下对应的 `.yuque.json`
-- 调用 `render_doc_markdown()` 重新写出 Markdown 文件
+- 调用 `render_doc_markdown()` 重新生成 Markdown
 - 覆盖写回对应 `.md`
 - 将过程记录到 `regenerate.log`
 
@@ -226,7 +233,7 @@ python regenerate_md.py
 - `regenerate.log` 采用追加写入，旧警告可能仍会保留。
 - 判断本次是否修复成功时，应重点看最新一轮日志尾部。
 
-## 如何判断问题属于哪一层
+## 如何判断问题属于哪类模块
 
 ### 更像配置或环境问题
 
@@ -244,14 +251,20 @@ python regenerate_md.py
 - `配置文件说明.md`
 - 代理与 Token 配置
 
-### 更像导出编排问题
+### 更像导出流程问题
 
 特征：
 
 - 某些文档没有写出
-- 路径层级不对
+- 目录层级不对
 - 断点恢复异常
 - 导出统计和实际文件不一致
+- 选择了部分文档，但最终实际导出的数量更少
+
+常见原因：
+
+- 选中的内容里包含非当前登录账号的知识库文档，如受邀协作知识库
+- 某些文档已删除，或当前账号对该文档没有导出权限
 
 优先看：
 
@@ -275,7 +288,7 @@ python regenerate_md.py
 - `testcases/test_markdown_converter.py`
 - [语雀lake格式解析.md](语雀lake格式解析.md)
 
-### 更像资源本地化问题
+### 更像资源处理问题
 
 特征：
 
@@ -304,7 +317,7 @@ python -m pytest testcases/
 python -m pytest testcases/test_markdown_converter.py
 ```
 
-只看本地化与导出过程：
+只看资源处理与导出过程：
 
 ```bash
 python -m pytest testcases/test_localizer.py testcases/test_export_flow.py

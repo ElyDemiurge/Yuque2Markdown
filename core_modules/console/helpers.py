@@ -66,6 +66,8 @@ def toggle_config_value(config: AppConfig, action: str) -> None:
         config.ui_preferences.auto_save_after_export = not config.ui_preferences.auto_save_after_export
     elif action == "persist_token":
         config.persist_token = not config.persist_token
+    elif action == "persist_cookie":
+        config.persist_cookie = not config.persist_cookie
 
 
 def filter_repos(repos: list[dict], filter_text: str) -> list[dict]:

@@ -34,17 +34,18 @@ def build_doc_markdown_result(
     assets_dir: Path,
     offline_assets: bool,
     attachment_suffixes: list[str],
+    allow_attachment_downloads: bool = False,
     fetch_binary=None,
     doc_slug_map: dict[str, str] | None = None,
 ):
-    """构建单篇文档最终 Markdown 结果，供导出与根据 .lake 重新写出 Markdown 文件共用。"""
+    """构建单篇文档最终 Markdown 结果，供导出与根据 .lake 重新生成 Markdown 共用。"""
     if render_result is None:
         if doc_data is None:
             raise ValueError("doc_data 和 render_result 不能同时为空")
         render_result = render_doc_markdown(doc_data)
     if not offline_assets:
         return render_result
-    # 离线资源启用后，优先复用本地 assets；缺失时再尝试下载并重写链接。
+    # 启用离线资源后，优先复用本地 assets；缺失时再尝试下载并改写链接。
     return localize_markdown_assets(
         render_result,
         assets_dir=assets_dir,
@@ -52,6 +53,7 @@ def build_doc_markdown_result(
         doc_slug_map=doc_slug_map,
         current_markdown_path=markdown_path,
         attachment_suffixes=attachment_suffixes,
+        allow_attachment_downloads=allow_attachment_downloads,
     )
 
 
@@ -95,6 +97,12 @@ class Exporter:
         result = ExportResult(repo=repo)
         queue = self._collect_doc_titles(toc_tree, checkpoint, options)
         total_docs = len(queue)
+        selection_warning = None
+        if options.selected_doc_ids is not None and len(options.selected_doc_ids) != total_docs:
+            selection_warning = (
+                f"选择了 {len(options.selected_doc_ids)} 篇文档，实际可导出 {total_docs} 篇；"
+                "可能有文档已删除、无权限或不在当前目录树中"
+            )
         progress = ProgressSnapshot(
             export_started_monotonic=overall_start,
             total_docs=total_docs,
@@ -104,6 +112,11 @@ class Exporter:
             details={"log_path": str(log_path)},
         )
         log.export_started(repo.name or repo.book_slug, str(repo_dir), total_docs)
+        if selection_warning:
+            log.warning(selection_warning)
+            progress.warning_count = 1
+            progress.latest_warning = selection_warning
+            progress.new_warnings = [selection_warning]
         self._emit_progress(progress)
 
         used_names: dict[Path, set[str]] = {}
@@ -305,7 +318,7 @@ class Exporter:
         progress: ProgressSnapshot,
         log: ExportLogger,
     ) -> None:
-        """导出单篇文档及其附属资源。"""
+        """导出单篇文档及其相关资源。"""
         doc_start = time.monotonic()
 
         doc_id = node.doc_id
@@ -339,7 +352,7 @@ class Exporter:
 
         doc_data = doc_payload.get("data", {})
         raw_lake = str(doc_data.get("body_lake") or "")
-        if output_paths.raw_lake_path and raw_lake:
+        if output_paths.raw_lake_path and (raw_lake or str(doc_data.get("format") or "").lower() == "lake"):
             write_text_file(output_paths.raw_lake_path, raw_lake)
 
         self._emit_progress(
@@ -384,17 +397,17 @@ class Exporter:
 
         log.doc_markdown_done(node.title, state.warning_count, len(render_result.resources))
 
-        # 如果启用离线化，先做本地化再写盘；否则直接写原始 Markdown
+        # 如果启用离线资源，先下载图片并改写链接，再写盘；否则直接写原始 Markdown。
         final_result = render_result
         if options.offline_assets:
-            # 导出与根据 .lake 重新写出 Markdown 文件使用同一套本地化处理代码，避免两处逻辑不一致。
+            # 导出与根据 .lake 重新生成 Markdown 使用同一套资源处理代码，避免两处逻辑不一致。
             self._emit_progress(
                 progress,
                 current_doc_title=node.title,
                 current_doc_started_monotonic=doc_start,
-                current_stage="离线化图片和附件",
-                active_tasks=[f"处理图片和附件: {node.title}", f"重写内部链接: {node.title}"],
-                latest_event=f"正在离线化 {node.title} 的资源",
+                current_stage="下载图片并执行附件本地化",
+                active_tasks=[f"处理资源: {node.title}", f"改写内部链接: {node.title}"],
+                latest_event=f"正在处理 {node.title} 的资源",
             )
             previous_warning_count = len(state.warnings)
             final_result = build_doc_markdown_result(
@@ -403,6 +416,7 @@ class Exporter:
                 assets_dir=output_paths.assets_dir,
                 offline_assets=True,
                 attachment_suffixes=options.attachment_suffixes,
+                allow_attachment_downloads=options.allow_attachment_downloads,
                 fetch_binary=self.client.fetch_binary,
                 doc_slug_map=checkpoint.doc_slug_map,
             )
@@ -462,7 +476,7 @@ class Exporter:
             state.stage = "markdown_written"
             save_checkpoint(repo_dir, checkpoint)
 
-        # 最终 Markdown（含本地化结果）落盘
+        # 最终 Markdown（含资源处理结果）写入文件。
         write_text_file(output_paths.markdown_path, final_result.markdown)
 
         self._mark_doc_completed(

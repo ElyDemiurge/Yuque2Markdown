@@ -34,6 +34,18 @@ def test_short_token_warning():
     assert any(e.field == "token" for e in errors)
 
 
+def test_invalid_auth_mode():
+    config = AppConfig(auth_mode="password")
+    errors = validate_config(config)
+    assert any(e.field == "auth_mode" for e in errors)
+
+
+def test_invalid_cookie():
+    config = AppConfig(auth_mode="cookie", cookie="not-a-cookie")
+    errors = validate_config(config)
+    assert any(e.field == "cookie" for e in errors)
+
+
 # ── Export defaults validation ─────────────────────────────────
 
 def test_empty_output_dir():

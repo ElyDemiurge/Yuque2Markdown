@@ -21,13 +21,21 @@ def render_doc_markdown(
 
     content, lake_warnings = lake_to_markdown(doc_data)
     warnings.extend(lake_warnings)
+    body_lake = str(doc_data.get("body_lake") or "").strip()
 
-    # 如果 body_lake 为空但存在 body 字段（旧的 markdown 格式），回退使用 body
     if not content.strip():
         body = str(doc_data.get("body") or "").strip()
-        if body:
+        web_content = str(doc_data.get("content") or "").strip()
+        if not body_lake and body:
             content = body
-            warnings.append("文档缺少 body_lake 内容，使用 body 字段代替（可能丢失部分格式）")
+            warnings.append("文档未返回 lake 正文，已回退到 body 字段（可能丢失部分格式）")
+        elif not body_lake and web_content:
+            content = web_content
+            warnings.append("文档未返回 lake 正文，已回退到 content 字段（可能丢失部分格式）")
+        elif body_lake:
+            warnings.append("文档正文为空或只包含占位内容")
+        else:
+            warnings.append("文档正文为空")
 
     content = maybe_prepend_title(content, title, prepend_title=prepend_title)
     resources = collect_resources(content, "lake", base_url=base_url)
@@ -70,7 +78,6 @@ def lake_to_markdown(doc_data: dict) -> tuple[str, list[str]]:
     body_lake = str(doc_data.get("body_lake") or "").strip()
 
     if not body_lake:
-        warnings.append("文档缺少 body_lake 内容")
         return "", warnings
 
     content, parse_warnings = _render_lake_document(body_lake)
@@ -403,7 +410,7 @@ def _render_lake_card(element: ET.Element, *, warnings: list[str]) -> str:
         warnings.append(f"Lake {name} card 缺少链接")
         return ""
 
-    warnings.append(f"Lake 转换未完全覆盖：存在未支持 card 类型 {name or 'unknown'}")
+    warnings.append(f"Lake 转换未支持 card 类型: {name or 'unknown'}")
     return ""
 
 

@@ -1,6 +1,6 @@
 """控制台导出流程处理器。"""
 
-from core_modules.config.models import AppConfig, SessionState, build_export_options
+from core_modules.config.models import AppConfig, SessionState, active_auth_value, auth_mode_label, build_export_options, normalize_auth_mode
 from core_modules.console.menu import run_confirmation, show_message
 from core_modules.export.cli import execute_export, handle_export_error
 from core_modules.export.progress import ExportProgressUI
@@ -22,15 +22,21 @@ def handle_export(
     format_rate_limit,
 ) -> str:
     """执行一次完整导出流程。"""
-    token = (config.token or "").strip()
-    if not session.connection_ok or not token:
-        session.token_status_message = "请先设置有效 Token"
-        show_message("缺少 Token", ["请先在控制台中设置 Yuque Token 并刷新连接状态。"])
+    credential = active_auth_value(config)
+    label = auth_mode_label(normalize_auth_mode(config.auth_mode))
+    if not session.connection_ok or not credential:
+        session.token_status_message = f"请先设置有效 {label}"
+        show_message(f"缺少 {label}", [f"请先在控制台中设置语雀 {label} 并刷新连接状态。"])
         return rate_limit_summary
     if not session.repo_input:
         session.status_message = "请先设置知识库"
         show_message("缺少知识库", ["请先手动输入知识库，或从列表选择知识库。"])
         return rate_limit_summary
+    if session.current_user_login and "/" in session.repo_input:
+        owner_login = session.repo_input.split("/", 1)[0]
+        if owner_login != session.current_user_login:
+            show_message("暂不支持导出", ["当前项目仅支持导出当前账号自己的个人知识库。", "非当前登录账号的知识库暂不支持导出，如受邀协作知识库。"])
+            return rate_limit_summary
     config = apply_session_to_config(config, session)
     options = build_export_options(config, session.repo_input, session.selected_doc_ids)
     append_console_log(f"EXPORT_START repo={session.repo_input} scope={build_selected_docs_text(session)}")
@@ -39,7 +45,7 @@ def handle_export(
         if not confirmed:
             session.status_message = "已取消导出"
             return rate_limit_summary
-    client = build_client_from_config(config, token)
+    client = build_client_from_config(config, credential)
     progress_ui = ExportProgressUI()
 
     def _on_progress(snapshot) -> None:

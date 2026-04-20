@@ -15,28 +15,12 @@ def test_attachment_section_contains_tree_structure():
     keys = [item.key for item in items]
 
     assert "section_attachments" in keys
-    assert "attachment_suffixes_all" in keys
-    assert "attachment_group__archives" in keys
-    assert "attachment_row__archives__0" in keys
-    assert "attachment_custom_suffixes" in keys
-    assert keys.index("attachment_suffixes_all") < keys.index("attachment_group__archives") < keys.index("attachment_custom_suffixes")
-    all_item = next(item for item in items if item.key == "attachment_suffixes_all")
-    group_item = next(item for item in items if item.key == "attachment_group__archives")
-    row_item = next(item for item in items if item.key == "attachment_row__archives__0")
-    custom_item = next(item for item in items if item.key == "attachment_custom_suffixes")
-    assert "无论是否启用，均默认下载 markdown 的图片资源" in all_item.title
-    assert all_item.item_type == "readonly"
-    assert all_item.value == "当前不可用"
-    assert all_item.indent == 0
-    assert group_item.indent == 1
-    assert row_item.indent == 2
-    assert custom_item.indent == 1
-    assert group_item.item_type == "readonly"
-    assert row_item.item_type == "readonly"
-    assert custom_item.item_type == "readonly"
-    assert custom_item.focusable is False
-    row_item = next(item for item in items if item.key == "attachment_row__archives__0")
-    assert len(row_item.inline_choices) == 3
+    assert "attachment_disabled" in keys
+    assert "attachment_suffixes_all" not in keys
+    disabled_item = next(item for item in items if item.key == "attachment_disabled")
+    assert disabled_item.title == "[-] 附件下载"
+    assert disabled_item.item_type == "readonly"
+    assert disabled_item.value.startswith("使用 Token 登录时无法下载附件")
 
 
 def test_toggle_attachment_group_adds_all_suffixes():
@@ -78,8 +62,26 @@ def test_all_resources_status_reflects_wildcard():
     controller = ExportSettingsController(config, SessionState())
 
     items = controller._build_menu_items()
-    all_item = next(item for item in items if item.key == "attachment_suffixes_all")
+    disabled_item = next(item for item in items if item.key == "attachment_disabled")
 
-    assert all_item.item_type == "readonly"
-    assert all_item.value == "当前不可用"
-    assert "attachment_group__archives" in [item.key for item in items]
+    assert disabled_item.title == "[-] 附件下载"
+    assert disabled_item.item_type == "readonly"
+    assert disabled_item.value.startswith("使用 Token 登录时无法下载附件")
+    assert "attachment_group__archives" not in [item.key for item in items]
+
+
+def test_attachment_section_enabled_with_cookie_login():
+    config = AppConfig(auth_mode="cookie", cookie="yuque_ctoken=demo")
+    config.export_defaults.attachment_suffixes = ["*"]
+    controller = ExportSettingsController(config, SessionState())
+
+    items = controller._build_menu_items()
+    all_item = next(item for item in items if item.key == "attachment_suffixes_all")
+    group_item = next(item for item in items if item.key == "attachment_group__archives")
+
+    assert all_item.item_type == "check"
+    assert all_item.focusable is True
+    assert all_item.value == "开启"
+    assert group_item.item_type == "check"
+    assert group_item.focusable is True
+    assert group_item.value == "开启"

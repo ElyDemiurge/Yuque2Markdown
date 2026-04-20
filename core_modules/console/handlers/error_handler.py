@@ -96,7 +96,7 @@ def handle_connection_error(
                 log_func(f"刷新连接失败（代理问题）: {proxy_msg}")
             return ErrorResult(message=message, detail=proxy_msg)
 
-        message = "连接检查失败（代理正常，请检查 Token 或网络）"
+        message = "连接检查失败（代理正常，请检查登录凭据或网络）"
         update_session_error_state(
             session,
             token_message=message,

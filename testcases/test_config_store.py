@@ -7,7 +7,10 @@ from core_modules.config.store import CONFIG_FILE_NAME, config_path, load_config
 def test_config_store_round_trip(tmp_path: Path) -> None:
     config = AppConfig()
     config.token = "demo-token"
+    config.auth_mode = "cookie"
+    config.cookie = "yuque_ctoken=demo-cookie"
     config.persist_token = True
+    config.persist_cookie = True
     config.last_repo_input = "cyberangel/rg9gdm"
     config.export_defaults.output_dir = "demo-output"
     config.export_defaults.timeout = 10
@@ -21,7 +24,10 @@ def test_config_store_round_trip(tmp_path: Path) -> None:
     assert saved == tmp_path / CONFIG_FILE_NAME
     loaded = load_config(tmp_path)
     assert loaded.token == "demo-token"
+    assert loaded.auth_mode == "cookie"
+    assert loaded.cookie == "yuque_ctoken=demo-cookie"
     assert loaded.persist_token is True
+    assert loaded.persist_cookie is True
     assert loaded.last_repo_input == "cyberangel/rg9gdm"
     assert loaded.export_defaults.output_dir == "demo-output"
     assert loaded.export_defaults.timeout == 10
@@ -33,23 +39,27 @@ def test_config_store_round_trip(tmp_path: Path) -> None:
 
 
 def test_config_store_skips_token_when_persist_disabled(tmp_path: Path) -> None:
-    config = AppConfig(token="demo-token", persist_token=False)
+    config = AppConfig(token="demo-token", cookie="yuque_ctoken=demo-cookie", persist_token=False, persist_cookie=False)
 
     save_config(config, tmp_path)
     loaded = load_config(tmp_path)
 
     assert loaded.persist_token is False
     assert loaded.token == ""
+    assert loaded.persist_cookie is False
+    assert loaded.cookie == ""
 
 
 def test_config_store_keeps_persist_token_flag_when_disabled(tmp_path: Path) -> None:
-    config = AppConfig(token="demo-token", persist_token=False)
+    config = AppConfig(token="demo-token", cookie="yuque_ctoken=demo-cookie", persist_token=False, persist_cookie=False)
 
     save_config(config, tmp_path)
     raw = (tmp_path / CONFIG_FILE_NAME).read_text(encoding="utf-8")
 
     assert '"persist_token": false' in raw
     assert '"token": ""' in raw
+    assert '"persist_cookie": false' in raw
+    assert '"cookie": ""' in raw
 
 
 def test_build_export_options_uses_config_defaults() -> None:
@@ -71,7 +81,16 @@ def test_build_export_options_uses_config_defaults() -> None:
     assert options.assets_dir_name == "files"
     assert options.fail_on_asset_error is True
     assert options.attachment_suffixes == [".pdf", ".mp4"]
+    assert options.allow_attachment_downloads is False
     assert options.selected_doc_ids == {1, 2}
+
+
+def test_build_export_options_allows_attachment_download_with_cookie() -> None:
+    config = AppConfig(auth_mode="cookie", cookie="yuque_ctoken=demo-cookie")
+
+    options = build_export_options(config, "cyberangel/rg9gdm")
+
+    assert options.allow_attachment_downloads is True
 
 
 def test_config_store_migrates_legacy_file_type(tmp_path: Path) -> None:
@@ -120,3 +139,23 @@ def test_config_path_uses_visible_filename(tmp_path: Path) -> None:
     path = config_path(tmp_path)
     assert path.name == CONFIG_FILE_NAME
     assert not path.name.startswith(".")
+
+
+def test_config_store_defaults_to_persist_cookie_for_legacy_config(tmp_path: Path) -> None:
+    raw = """
+{
+  "version": 1,
+  "auth_mode": "cookie",
+  "token": "",
+  "cookie": "yuque_ctoken=demo-cookie",
+  "persist_token": true,
+  "last_repo_input": "",
+  "export_defaults": {},
+  "ui_preferences": {}
+}
+""".strip()
+    (tmp_path / CONFIG_FILE_NAME).write_text(raw, encoding="utf-8")
+
+    loaded = load_config(tmp_path)
+
+    assert loaded.persist_cookie is True

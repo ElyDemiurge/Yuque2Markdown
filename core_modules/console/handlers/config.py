@@ -9,7 +9,7 @@ from core_modules.config.store import save_config
 
 
 def apply_session_to_config(config: AppConfig, session: SessionState) -> AppConfig:
-    """将当前会话里的选择合并到持久化配置。"""
+    """将当前会话里的选择合并到配置文件。"""
     updated = replace(config)
     updated.last_repo_input = session.repo_input or config.last_repo_input
     if not updated.persist_token:

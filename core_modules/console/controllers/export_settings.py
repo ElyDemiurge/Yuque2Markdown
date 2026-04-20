@@ -1,6 +1,6 @@
 """导出设置子菜单控制器。"""
 
-from core_modules.config.models import AppConfig, SessionState, normalize_attachment_suffixes, parse_attachment_suffixes_input
+from core_modules.config.models import AUTH_MODE_COOKIE, AppConfig, SessionState, normalize_auth_mode, normalize_attachment_suffixes, parse_attachment_suffixes_input
 from core_modules.console.helpers import parse_action, toggle_config_value
 from core_modules.console.menu import InlineChoice, MenuItem, run_menu, show_message
 from core_modules.config.validator import ATTACHMENT_SUFFIX_PATTERN
@@ -15,8 +15,8 @@ ATTACHMENT_SUFFIX_ROW_GROUPS = {
     "docs": [[".pdf", ".doc", ".docx", ".xls", ".xlsx"], [".ppt", ".pptx"]],
     "media": [[".mp3", ".mp4"]],
 }
-ATTACHMENT_DOWNLOAD_DISABLED_TEXT = "当前不可用"
-ATTACHMENT_ALL_TITLE = "选择下载所有资源（无论是否启用，均默认下载 markdown 的图片资源）"
+ATTACHMENT_DOWNLOAD_DISABLED_TEXT = "使用 Token 登录时无法下载附件以及选择下载附件类型；如需下载附件，请切换到浏览器 Cookie 登录。"
+ATTACHMENT_ALL_TITLE = "下载全部附件"
 
 
 class ExportSettingsController:
@@ -52,7 +52,6 @@ class ExportSettingsController:
                 self._handle_assets_dir(edited_value)
             elif key in {"resume", "strict", "offline_assets", "fail_on_asset_error"}:
                 self._handle_toggle(key)
-            # 附件下载 UI 当前只读展示；相关分支继续保留，便于后续恢复能力时直接复用。
             elif key == "attachment_suffixes_all":
                 self._toggle_attachment_all()
             elif key.startswith("attachment_group__"):
@@ -64,25 +63,48 @@ class ExportSettingsController:
 
     def _build_menu_items(self) -> list[MenuItem]:
         """构造导出设置菜单项。"""
+        attachment_enabled = normalize_auth_mode(self.config.auth_mode) == AUTH_MODE_COOKIE
         items = [
             MenuItem("section_paths", "── 路径与资源 ──", item_type="section", focusable=False),
             MenuItem("output_dir", "输出目录", self.config.export_defaults.output_dir, input_style=True),
             MenuItem("assets_dir_name", "资源目录名", self.config.export_defaults.assets_dir_name, input_style=True),
             MenuItem("section_flags", "── 导出行为 ──", item_type="section", focusable=False),
-            MenuItem("resume", "断点续导", self._bool_text(self.config.export_defaults.resume), item_type="bool"),
+            MenuItem("resume", "断点恢复", self._bool_text(self.config.export_defaults.resume), item_type="bool"),
             MenuItem("strict", "严格模式", self._bool_text(self.config.export_defaults.strict), item_type="bool"),
             MenuItem("offline_assets", "离线资源", self._bool_text(self.config.export_defaults.offline_assets), item_type="bool"),
             MenuItem("section_attachments", "── 附件资源下载 ──", item_type="section", focusable=False),
+        ]
+        if not attachment_enabled:
+            items.append(
+                MenuItem(
+                    "attachment_disabled",
+                    "[-] 附件下载",
+                    ATTACHMENT_DOWNLOAD_DISABLED_TEXT,
+                    item_type="readonly",
+                    focusable=False,
+                )
+            )
+            items.append(
+                MenuItem(
+                    "fail_on_asset_error",
+                    "资源下载失败时中止导出",
+                    self._bool_text(self.config.export_defaults.fail_on_asset_error),
+                    item_type="bool",
+                )
+            )
+            return items
+
+        items.append(
             MenuItem(
                 "attachment_suffixes_all",
                 ATTACHMENT_ALL_TITLE,
-                ATTACHMENT_DOWNLOAD_DISABLED_TEXT,
-                item_type="readonly",
+                self._bool_text(self._all_resources_enabled()),
+                item_type="check",
                 indent=0,
-                focusable=False,
+                focusable=True,
             ),
-        ]
-        items.extend(self._build_attachment_suffix_items(disabled=True))
+        )
+        items.extend(self._build_attachment_suffix_items(disabled=False))
         items.append(
             MenuItem(
                 "fail_on_asset_error",
@@ -98,7 +120,7 @@ class ExportSettingsController:
         items: list[MenuItem] = []
         for group_key in ("archives", "docs", "media"):
             label, suffixes = ATTACHMENT_SUFFIX_GROUPS[group_key]
-            group_selected = self._group_selected(selected, suffixes)
+            group_selected = selected == ["*"] or self._group_selected(selected, suffixes)
             items.append(
                 MenuItem(
                     f"attachment_group__{group_key}",
@@ -122,7 +144,7 @@ class ExportSettingsController:
                             InlineChoice(
                                 key=f"attachment_suffix__{suffix.lstrip('.')}",
                                 label=suffix,
-                                checked=suffix in selected,
+                                checked=selected == ["*"] or suffix in selected,
                             )
                             for suffix in row_suffixes
                         ],
@@ -169,7 +191,7 @@ class ExportSettingsController:
         """处理布尔开关项切换。"""
         toggle_config_value(self.config, key)
         label_map = {
-            "resume": "断点续导",
+            "resume": "断点恢复",
             "strict": "严格模式",
             "offline_assets": "离线资源",
             "fail_on_asset_error": "资源下载失败时中止导出",

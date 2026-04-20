@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from core_modules.config.models import AppConfig, SessionState
+from core_modules.config.models import AUTH_MODE_COOKIE, AppConfig, SessionState, auth_mode_label, normalize_auth_mode, summarize_attachment_suffixes
 from core_modules.config.store import config_path
 
 
@@ -63,12 +63,18 @@ def build_connection_status(status_message: str, rate_limit_summary: str, error_
 
 
 def build_confirmation_lines(config: AppConfig, session: SessionState, *, build_selected_docs_text) -> list[str]:
-    attachment_status = "图片会下载到本地，语雀附件保留原始链接（API 暂不支持导出）"
     defaults = config.export_defaults
+    auth_mode = normalize_auth_mode(config.auth_mode)
+    if auth_mode == AUTH_MODE_COOKIE:
+        attachment_status = f"Cookie 登录，可下载 {summarize_attachment_suffixes(defaults.attachment_suffixes)}"
+    else:
+        attachment_status = "使用 Token 登录时无法下载附件以及选择下载附件类型，语雀附件会保留原始链接"
     lines = [
         "[连接与身份]",
         _confirm_value_line("当前用户", session.current_user_label),
+        _confirm_value_line("登录方式", auth_mode_label(auth_mode)),
         _confirm_value_line("Token", f"{'已设置' if config.token else '未设置'} | 保存到配置文件 {bool_text(config.persist_token)}"),
+        _confirm_value_line("Cookie", f"{'已设置' if config.cookie else '未设置'} | 保存到配置文件 {bool_text(config.persist_cookie)}"),
         "",
         "[知识库与范围]",
         _confirm_value_line("知识库", session.repo_display_name or session.repo_input or "未设置"),
@@ -118,7 +124,7 @@ def build_result_lines(config: AppConfig, session: SessionState, result, *, buil
     ]
     if result.elapsed_seconds is not None:
         lines.append(f"耗时: {result.elapsed_seconds:.1f} 秒")
-    lines.append(f"重写内部链接: {result.rewritten_links}")
+    lines.append(f"改写内部链接: {result.rewritten_links}")
     if result.total_warnings > 0:
         lines.append(f"总警告数: {result.total_warnings}")
     if result.total_downloaded > 0:
@@ -137,6 +143,9 @@ def build_result_lines(config: AppConfig, session: SessionState, result, *, buil
 
 def build_status_lines(config: AppConfig, session: SessionState, rate_limit_summary: str) -> list[str]:
     token_msg = session.token_status_message
+    auth_mode = normalize_auth_mode(config.auth_mode)
+    auth_label = auth_mode_label(auth_mode)
+    has_credential = bool(config.cookie if auth_mode == AUTH_MODE_COOKIE else config.token)
     if session.connection_ok:
         if "已修改" in token_msg or "请测试" in token_msg or "请刷新" in token_msg:
             token_color = "[YELLOW] "
@@ -154,7 +163,7 @@ def build_status_lines(config: AppConfig, session: SessionState, rate_limit_summ
         else:
             token_color = "[GREEN] "
             token_status = f"已连接（{session.current_user_label}）"
-    elif config.token:
+    elif has_credential:
         if "限流" in token_msg or "429" in token_msg:
             token_color = "[YELLOW] "
             token_status = token_msg
@@ -170,10 +179,10 @@ def build_status_lines(config: AppConfig, session: SessionState, rate_limit_summ
             token_status = token_msg
         else:
             token_color = ""
-            token_status = "已设置 Token（未刷新连接）"
+            token_status = f"已设置 {auth_label}（未刷新连接）"
     else:
         token_color = ""
-        token_status = "未设置 Token"
+        token_status = f"未设置 {auth_label}"
 
     if session.repo_namespace:
         repo_status = f"{session.repo_display_name or session.repo_namespace}"
@@ -219,7 +228,7 @@ def build_status_lines(config: AppConfig, session: SessionState, rate_limit_summ
         network_status = proxy_base
 
     return [
-        f"{token_color}Token: {token_status}",
+        f"{token_color}{auth_label}: {token_status}",
         f"知识库: {repo_status}",
         f"导出范围: {scope_status}",
         f"{network_color}网络: {network_status}",

@@ -462,18 +462,38 @@ def run_select_list(
     help_lines: list[str] | None = None,
     filter_text: str = "",
     empty_message: str = "暂无可选项",
+    disabled_indexes: set[int] | None = None,
 ) -> tuple[int | None, str]:
     """显示可过滤列表，并返回选中项索引与当前过滤词。"""
     index = max(0, min(initial_index, len(lines) - 1)) if lines else 0
     filter_buf = list(filter_text)
     cursor_pos = len(filter_buf)
     in_filter_mode = False
+    disabled_indexes = set(disabled_indexes or set())
 
-    def _apply_filter(src_lines: list[str], ft: str) -> list[str]:
+    def _apply_filter(src_lines: list[str], ft: str) -> list[tuple[int, str]]:
         if not ft:
-            return src_lines
+            return list(enumerate(src_lines))
         ft_lower = ft.lower()
-        return [line for line in src_lines if ft_lower in line.lower()]
+        return [(idx, line) for idx, line in enumerate(src_lines) if ft_lower in line.lower()]
+
+    def _first_enabled_index(filtered_items: list[tuple[int, str]]) -> int | None:
+        for filtered_index, (source_index, _line) in enumerate(filtered_items):
+            if source_index not in disabled_indexes:
+                return filtered_index
+        return None
+
+    def _move_enabled_index(filtered_items: list[tuple[int, str]], current: int, step: int) -> int:
+        if not filtered_items:
+            return 0
+        next_index = current
+        while True:
+            candidate = next_index + step
+            if candidate < 0 or candidate >= len(filtered_items):
+                return current
+            next_index = candidate
+            if filtered_items[next_index][0] not in disabled_indexes:
+                return next_index
 
     def _run(stdscr) -> tuple[int | None, str]:
         nonlocal index, filter_buf, cursor_pos, in_filter_mode
@@ -529,11 +549,17 @@ def run_select_list(
                 index = 0
                 continue
             safe_index = max(0, min(index, len(filtered) - 1))
-            for current_row, line in enumerate(filtered, start=row):
+            first_enabled_index = _first_enabled_index(filtered)
+            if first_enabled_index is not None and filtered[safe_index][0] in disabled_indexes:
+                safe_index = first_enabled_index
+                index = safe_index
+            for current_row, (source_index, line) in enumerate(filtered, start=row):
                 if current_row >= height:
                     break
                 prefix = ">" if current_row - row == safe_index else " "
                 attrs = curses.A_REVERSE if current_row - row == safe_index else 0
+                if source_index in disabled_indexes:
+                    attrs |= curses.A_DIM
                 stdscr.addnstr(current_row, left, _truncate(f"{prefix} {line}", content_width), content_width, attrs)
             if in_filter_mode:
                 text = "".join(filter_buf)
@@ -571,20 +597,22 @@ def run_select_list(
                 if key == curses.KEY_UP:
                     curses.curs_set(0)
                     in_filter_mode = False
-                    index = max(0, index - 1)
+                    index = _move_enabled_index(filtered, safe_index, -1)
                     continue
                 if key == curses.KEY_DOWN:
                     curses.curs_set(0)
                     in_filter_mode = False
-                    index = min(len(filtered) - 1, index + 1)
+                    index = _move_enabled_index(filtered, safe_index, 1)
                     continue
                 continue
             if key == curses.KEY_UP:
-                index = max(0, index - 1)
+                index = _move_enabled_index(filtered, safe_index, -1)
             elif key == curses.KEY_DOWN:
-                index = min(len(filtered) - 1, index + 1)
+                index = _move_enabled_index(filtered, safe_index, 1)
             elif key in (10, 13):
-                return safe_index, current_filter
+                if filtered[safe_index][0] in disabled_indexes:
+                    continue
+                return filtered[safe_index][0], current_filter
             elif key == ord("q"):
                 return None, current_filter
             elif key == ord("/") or key == ord("?"):
@@ -814,7 +842,7 @@ def _render_inline_choice_menu_item(
     if item.title:
         label = f"{title_indent}{prefix} {item.title}"
     else:
-        label = title_indent
+        label = f"{title_indent}{prefix}"
     stdscr.addnstr(row, left, _truncate(label, content_width), content_width, attrs)
     start_x = left + min(_display_width(label), max(0, content_width - 1))
     cell_width = max((min(18, _display_width(f"[ ] {choice.label}") + 4) for choice in item.inline_choices), default=12)

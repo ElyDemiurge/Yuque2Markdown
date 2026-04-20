@@ -2,12 +2,12 @@
 
 ## 概览
 
-Yuque2Markdown 是一个将语雀知识库导出为本地 Markdown 的交互式终端工具。主线流程是“控制台交互 -> 导出编排 -> Lake 转换 -> 文件落盘”：
+Yuque2Markdown 是一个将个人语雀知识库导出为本地 Markdown 的交互式终端工具。主线流程是“控制台交互 -> 导出流程 -> Lake 转换 -> 写入文件”：
 
 - 在终端中完成配置、知识库选择和导出控制
-- 通过语雀 API 拉取知识库、目录和文档详情
+- 通过语雀 OpenAPI 或网页端接口拉取知识库、目录和文档详情
 - 将 `body_lake` 转为可读的 Markdown
-- 下载并本地化图片资源，并保留语雀附件原始链接
+- 下载图片资源并改写为本地链接，同时保留语雀附件原始链接
 - 记录日志与断点，支持中断恢复和问题排查
 
 核心流程：
@@ -26,7 +26,7 @@ core_modules.export.exporter
   ├─ core_modules.lake.converter      body_lake -> Markdown
   ├─ core_modules.lake.localizer      资源下载与链接改写
   ├─ core_modules.export.writer       写入 Markdown / JSON / lake / 资源
-  └─ core_modules.export.checkpoint   持久化导出进度
+  └─ core_modules.export.checkpoint   保存导出进度
 ```
 
 ## 根目录入口与辅助文件
@@ -34,7 +34,7 @@ core_modules.export.exporter
 - `yuque2markdown.py`
   程序主入口。负责 Python 版本和标准库模块检查、终端环境检查，并启动交互式控制台。
 - `regenerate_md.py`
-  维护脚本。遍历 `output/` 中已有的 `.lake` 与 `.yuque.json` 文件，重新生成对应 Markdown；会优先复用本地 `assets/`，并在具备 Token 时补下缺失图片。
+  维护脚本。遍历 `output/` 中已有的 `.lake` 与 `.yuque.json` 文件，重新生成对应 Markdown；会优先复用本地 `assets/`，并在具备 Token 时下载缺失图片。
 - `pytest.ini`
   pytest 统一入口配置，约定测试目录为 `testcases/`。
 - `output/`
@@ -46,7 +46,7 @@ core_modules.export.exporter
 
 负责配置模型、加载保存和校验。
 
-- `models.py`：配置与运行态数据结构
+- `models.py`：配置与运行时数据结构
 - `store.py`：配置文件读写
 - `validator.py`：配置校验规则
 
@@ -65,15 +65,15 @@ core_modules.export.exporter
 
 - `controllers/` 更偏菜单组织与交互流程
 - `handlers/` 更偏业务动作与状态更新
-- `state/` 负责把运行态数据整理成可展示文本
+- `state/` 负责把运行时数据整理成可展示文本
 
 ### `core_modules/export/`
 
-负责导出执行、API 调用、断点续导、日志和文件落盘。
+负责导出执行、API 调用、断点恢复、日志和文件写入。
 
-- `client.py`：语雀 API 客户端
+- `client.py`：语雀 OpenAPI / 网页端接口客户端
 - `cli.py`：导出服务入口，连接控制台层与导出层
-- `exporter.py`：导出编排器，负责遍历 TOC、拉取文档、转换与写盘
+- `exporter.py`：导出流程控制器，负责遍历 TOC、拉取文档、转换与写入文件
 - `checkpoint.py`：断点保存与恢复
 - `file_naming.py`：安全文件名与路径处理
 - `logger.py`：导出日志记录
@@ -86,7 +86,7 @@ core_modules.export.exporter
 
 ### `core_modules/lake/`
 
-负责 Lake 格式解析、资源提取和资源本地化。
+负责 Lake 格式解析、资源提取、图片下载和链接改写。
 
 - `converter.py`：Lake -> Markdown
 - `resource_parser.py`：从 Markdown 中提取图片、附件、文档链接等资源引用
@@ -128,19 +128,19 @@ Lake 格式的详细规则、卡片类型和警告规则见 [语雀lake格式解
 - `export/writer.py` 写出 Markdown、原始 JSON、`.lake` 和资源文件
 - `checkpoint.py` 在导出过程中记录进度
 
-### 4. 根据 `.lake` 重新写出 Markdown 文件阶段
+### 4. 根据 `.lake` 重新生成 Markdown 阶段
 
 - 用户执行 `python regenerate_md.py`
 - 脚本遍历 `output/` 中的 `.lake` 和 `.yuque.json`
 - 重新调用 `render_doc_markdown()` 生成 Markdown
 - 将结果覆盖写回对应 `.md`
-- 在 `regenerate.log` 中记录本次重新写出情况
+- 在 `regenerate.log` 中记录本次重新生成的结果
 
 ## 关键状态对象
 
 ### `AppConfig`
 
-持久化配置，保存到 `yuque2markdown.config.json`，主要包含：
+保存到 `yuque2markdown.config.json` 的配置，主要包含：
 
 - Token
 - 默认导出配置
@@ -148,6 +148,9 @@ Lake 格式的详细规则、卡片类型和警告规则见 [语雀lake格式解
 - UI 偏好设置
 
 更完整字段说明见 [配置文件说明.md](配置文件说明.md)。
+
+当前版本仅支持个人语雀知识库导出，不支持企业版自定义 Cookie key。
+非当前登录账号的知识库会在选择界面灰显，且暂不支持导出，如受邀协作知识库。
 
 ### `SessionState`
 
@@ -171,7 +174,7 @@ Lake 格式的详细规则、卡片类型和警告规则见 [语雀lake格式解
 同时，导出过程还会生成：
 
 - `export.log`：导出过程日志
-- `regenerate.log`：重新写出 Markdown 文件的日志
+- `regenerate.log`：重新生成 Markdown 的日志
 - checkpoint 文件：用于中断恢复
 
 ## 测试结构
@@ -181,7 +184,7 @@ Lake 格式的详细规则、卡片类型和警告规则见 [语雀lake格式解
 - 配置与校验：`test_config_store.py`、`test_config_validator.py`
 - 控制台与菜单：`test_console_app.py`、`test_console_menu.py`
 - 导出与文件处理：`test_export_flow.py`、`test_file_naming.py`、`test_logger.py`、`test_writer.py`、`test_checkpoint.py`
-- Lake 转换与本地化：`test_markdown_converter.py`、`test_localizer.py`
+- Lake 转换与资源处理：`test_markdown_converter.py`、`test_localizer.py`
 - 目录树与选择器：`test_resolver.py`、`test_selector.py`、`test_toc_builder.py`
 - 进度展示：`test_progress.py`
 
@@ -189,15 +192,15 @@ Lake 格式的详细规则、卡片类型和警告规则见 [语雀lake格式解
 
 ## 设计原则
 
-### 1. 配置与运行态分离
+### 1. 配置与运行时状态分离
 
-- `AppConfig` 管持久化配置
+- `AppConfig` 管保存到文件的配置
 - `SessionState` 管会话状态和界面提示
 
 ### 2. 控制台层与导出层分离
 
 - `console/` 负责交互、状态和菜单
-- `export/` 负责 API、导出流程和落盘
+- `export/` 负责 API、导出流程和文件写入
 
 ### 3. 导出流程可恢复
 

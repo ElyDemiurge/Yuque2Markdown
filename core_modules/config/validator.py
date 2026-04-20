@@ -65,10 +65,16 @@ def validate_config(config: AppConfig) -> list[ValidationError]:
     if config.version < 1:
         errors.append(ValidationError("version", "配置版本号必须 >= 1"))
 
+    if config.auth_mode not in {"token", "cookie"}:
+        errors.append(ValidationError("auth_mode", "登录方式必须是 token 或 cookie"))
+
     # 校验 token（仅做格式检查，空白值允许）
     token = config.token
     if token and len(token) < 10:
         errors.append(ValidationError("token", "Token 长度过短，可能无效"))
+
+    if config.cookie and "=" not in config.cookie:
+        errors.append(ValidationError("cookie", "Cookie 格式无效，应包含 name=value"))
 
     # 校验 last_repo_input 格式
     if config.last_repo_input:

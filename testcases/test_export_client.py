@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import http.client
+import urllib.error
 
 from core_modules.export.client import YuqueClient
+from core_modules.export.errors import YuqueNetworkError, YuqueRateLimitError
 
 
 class _FakeResponse:
@@ -77,3 +79,47 @@ def test_request_retries_on_http2_bad_status_line() -> None:
 
     assert payload == {"data": {"id": 1}}
     assert client.build_count == 2
+
+
+def test_web_request_retries_on_http2_bad_status_line() -> None:
+    client = _RetryingClient(
+        [
+            http.client.BadStatusLine("HTTP/2"),
+            _FakeResponse(b'{"data":{"id":1}}', {"Content-Type": "application/json"}),
+        ]
+    )
+
+    payload = client.web_request("GET", "/mine")
+
+    assert payload == {"data": {"id": 1}}
+    assert client.build_count == 2
+
+
+def test_web_request_raises_rate_limit_error() -> None:
+    error = urllib.error.HTTPError(
+        "https://www.yuque.com/api/mine",
+        429,
+        "Too Many Requests",
+        {"Retry-After": "1"},
+        None,
+    )
+    error.read = lambda: b'{"message":"rate limited"}'
+    client = _RetryingClient([error])
+
+    try:
+        client.web_request("GET", "/mine")
+    except YuqueRateLimitError as exc:
+        assert "rate limited" in str(exc)
+    else:
+        raise AssertionError("expected YuqueRateLimitError")
+
+
+def test_web_request_raises_network_error_after_retries() -> None:
+    client = _RetryingClient([http.client.BadStatusLine("HTTP/2")])
+
+    try:
+        client.web_request("GET", "/mine")
+    except YuqueNetworkError:
+        pass
+    else:
+        raise AssertionError("expected YuqueNetworkError")

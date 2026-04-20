@@ -1,6 +1,7 @@
 from core_modules.export.errors import YuqueRateLimitError
 from core_modules.version import APP_VERSION
 
+from core_modules.browser_cookies import BrowserCookieResult
 from core_modules.config.models import AppConfig, SessionState
 from core_modules.console.app import (
     _build_client_from_config,
@@ -24,8 +25,13 @@ def test_build_main_menu_items_hides_repo_actions_when_connection_invalid() -> N
 
     items = _build_main_menu_items(config, session, "暂无")
     keys = [item.key for item in items]
+    auth_item = next(item for item in items if item.key == "auth_mode")
 
+    assert auth_item.title == "登录方式: "
+    assert [choice.label for choice in auth_item.inline_choices] == ["浏览器 Cookie", "Token"]
+    assert keys.index("auth_mode") < keys.index("token")
     assert "token" in keys
+    assert "import_cookie" not in keys
     assert "repo_input" not in keys
     assert "select_repo" not in keys
     assert "select_docs" not in keys
@@ -44,6 +50,21 @@ def test_build_main_menu_items_adds_sections_and_readonly_not_focusable() -> Non
     assert readonly_items
     assert all(item.focusable is False for item in section_items)
     assert all(item.focusable is False for item in readonly_items)
+
+
+def test_build_main_menu_items_shows_cookie_action_only_in_cookie_mode() -> None:
+    config = AppConfig(auth_mode="cookie")
+    session = SessionState()
+
+    items = _build_main_menu_items(config, session, "暂无")
+    keys = [item.key for item in items]
+    auth_item = next(item for item in items if item.key == "auth_mode")
+
+    assert auth_item.title == "登录方式: "
+    assert auth_item.inline_choices[0].checked is True
+    assert keys.index("auth_mode") < keys.index("import_cookie")
+    assert "import_cookie" in keys
+    assert "token" not in keys
 
 
 def test_build_connection_status_omits_empty_rate_limit() -> None:
@@ -150,7 +171,7 @@ def test_run_console_app_does_not_refresh_connection_on_startup(monkeypatch) -> 
     assert run_console_app() == 0
     assert captured["title"] == f"Yuque2Markdown {APP_VERSION} 控制台"
     assert isinstance(captured["status_lines"], list)
-    assert captured["status_lines"][0] == "[YELLOW] Token: 已加载 Token，请刷新 Token 状态"
+    assert captured["status_lines"][0] == "[YELLOW] Token: 已加载 Token，请刷新连接状态"
 
 
 def test_run_console_app_handles_refresh_rate_limit_without_crashing(monkeypatch) -> None:
@@ -176,6 +197,63 @@ def test_run_console_app_handles_refresh_rate_limit_without_crashing(monkeypatch
     monkeypatch.setattr("core_modules.console.app._refresh_connection_state", lambda *args, **kwargs: None)
 
     assert run_console_app() == 0
+
+
+def test_run_console_app_imports_cookie_from_browser(monkeypatch) -> None:
+    config = AppConfig()
+    calls = {"count": 0}
+
+    def fake_load_config() -> AppConfig:
+        return config
+
+    def fake_run_menu(title, items, **kwargs):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return "import_cookie"
+        return "exit"
+
+    def fake_persist_config(cfg, session, reason):
+        assert reason == "cookie_imported"
+        session.dirty = False
+        return cfg
+
+    monkeypatch.setattr("core_modules.console.app.load_config", fake_load_config)
+    monkeypatch.setattr("core_modules.console.app.run_menu", fake_run_menu)
+    monkeypatch.setattr(
+        "core_modules.console.app.load_yuque_cookie_from_browsers",
+        lambda: BrowserCookieResult("yuque_ctoken=demo", "Chrome/Default", "已加载"),
+    )
+    monkeypatch.setattr("core_modules.console.app._persist_config", fake_persist_config)
+
+    assert run_console_app() == 0
+    assert config.auth_mode == "cookie"
+    assert config.cookie == "yuque_ctoken=demo"
+
+
+def test_run_console_app_switching_to_cookie_imports_when_empty(monkeypatch) -> None:
+    config = AppConfig()
+    calls = {"count": 0}
+
+    def fake_load_config() -> AppConfig:
+        return config
+
+    def fake_run_menu(title, items, **kwargs):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return "auth_mode_cookie"
+        return "exit"
+
+    monkeypatch.setattr("core_modules.console.app.load_config", fake_load_config)
+    monkeypatch.setattr("core_modules.console.app.run_menu", fake_run_menu)
+    monkeypatch.setattr(
+        "core_modules.console.app.load_yuque_cookie_from_browsers",
+        lambda: BrowserCookieResult("yuque_ctoken=demo", "Chrome/Default", "已加载"),
+    )
+    monkeypatch.setattr("core_modules.console.app._persist_config", lambda cfg, session, reason: cfg)
+
+    assert run_console_app() == 0
+    assert config.auth_mode == "cookie"
+    assert config.cookie == "yuque_ctoken=demo"
 
 
 def test_build_confirmation_lines_include_sections() -> None:

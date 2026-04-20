@@ -22,7 +22,8 @@ from core_modules.export.errors import (
 )
 from core_modules.version import APP_VERSION
 
-BASE_URL = "https://www.yuque.com/api/v2"
+API_BASE_URL = "https://www.yuque.com/api/v2"
+WEB_BASE_URL = "https://www.yuque.com/api"
 DEFAULT_TIMEOUT = 10
 USER_AGENT = f"Yuque2Markdown/{APP_VERSION.lstrip('v')}"
 RETRYABLE_TRANSPORT_ERRORS = (
@@ -39,7 +40,10 @@ class YuqueClient:
     """封装语雀 OpenAPI 请求、重试与限流状态。"""
     def __init__(
         self,
-        token: str,
+        token: str = "",
+        *,
+        cookie: str = "",
+        auth_mode: str = "token",
         timeout: int = DEFAULT_TIMEOUT,
         request_interval: float = 0.1,
         max_retries: int = 5,
@@ -51,6 +55,8 @@ class YuqueClient:
         proxy_test_url: str = "https://www.baidu.com",
     ) -> None:
         self.token = token
+        self.cookie = cookie.strip()
+        self.auth_mode = auth_mode if auth_mode in {"token", "cookie"} else "token"
         self.timeout = timeout
         self.request_interval = request_interval
         self.max_retries = max_retries
@@ -65,6 +71,7 @@ class YuqueClient:
             "remaining": None,
             "reset": None,
         }
+        self._web_book_cache: dict[tuple[str, str], dict[str, Any]] = {}
         self._debug_logger = None
         self._opener = self._build_opener()
 
@@ -143,9 +150,57 @@ class YuqueClient:
         """设置调试日志回调，用于输出资源请求细节。"""
         self._debug_logger = callback
 
+    def _auth_headers(self) -> dict[str, str]:
+        if self.auth_mode == "cookie":
+            return {"Cookie": self.cookie}
+        return {"X-Auth-Token": self.token}
+
+    def web_request(self, method: str, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        """向语雀网页端 API 发起请求，供 Cookie 登录使用。"""
+        url = f"{WEB_BASE_URL}{path}"
+        if params:
+            query = urllib.parse.urlencode(params)
+            url = f"{url}?{query}"
+        request = urllib.request.Request(
+            url=url,
+            method=method,
+            headers={
+                "Accept": "application/json, text/plain, */*",
+                "User-Agent": "Mozilla/5.0",
+                "Referer": "https://www.yuque.com/",
+                **self._auth_headers(),
+            },
+        )
+        for attempt in range(self.max_retries):
+            if self.request_interval > 0:
+                time.sleep(self.request_interval)
+            try:
+                with self._opener.open(request, timeout=self.timeout) as response:
+                    self._update_rate_limit(response.headers)
+                    raw_body = response.read().decode("utf-8")
+                    return json.loads(raw_body)
+            except urllib.error.HTTPError as exc:
+                self._update_rate_limit(exc.headers)
+                raw_body = exc.read().decode("utf-8", errors="replace")
+                try:
+                    payload = json.loads(raw_body)
+                except json.JSONDecodeError:
+                    payload = {"message": raw_body}
+                retry_after = self._parse_retry_after(exc.headers.get("Retry-After"))
+                if exc.code == 429 and attempt < self.max_retries - 1:
+                    backoff = retry_after or min(self.max_backoff_seconds, self.rate_limit_backoff_seconds * (2 ** attempt))
+                    time.sleep(backoff)
+                    continue
+                self._raise_http_error(exc.code, payload, retry_after=retry_after)
+            except RETRYABLE_TRANSPORT_ERRORS as exc:
+                if self._retry_transport_error(attempt):
+                    continue
+                raise YuqueNetworkError(str(exc)) from exc
+        raise YuqueNetworkError("网页端请求重试失败")
+
     def request(self, method: str, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         """向语雀 API 发起请求，并处理重试、限流和错误转换。"""
-        url = f"{BASE_URL}{path}"
+        url = f"{API_BASE_URL}{path}"
         if params:
             query = urllib.parse.urlencode(params)
             url = f"{url}?{query}"
@@ -154,9 +209,9 @@ class YuqueClient:
             url=url,
             method=method,
             headers={
-                "X-Auth-Token": self.token,
                 "Accept": "application/json",
                 "User-Agent": USER_AGENT,
+                **self._auth_headers(),
             },
         )
 
@@ -194,8 +249,10 @@ class YuqueClient:
             url=binary_url,
             method="GET",
             headers={
-                "X-Auth-Token": self.token,
                 "User-Agent": USER_AGENT,
+                "Accept": "*/*",
+                "Referer": "https://www.yuque.com/",
+                **self._auth_headers(),
             },
         )
         for attempt in range(self.max_retries):
@@ -291,12 +348,20 @@ class YuqueClient:
         return max(0.0, min(self.max_backoff_seconds, delay))
 
     def get_current_user(self) -> dict[str, Any]:
+        if self.auth_mode == "cookie":
+            return self.web_request("GET", "/mine")
         return self.request("GET", "/user")
 
     def get_repo_detail(self, group_login: str, book_slug: str) -> dict[str, Any]:
+        if self.auth_mode == "cookie":
+            book = self._find_web_book(group_login, book_slug)
+            return {"data": book}
         return self.request("GET", f"/repos/{urllib.parse.quote(group_login)}/{urllib.parse.quote(book_slug)}")
 
     def get_repo_toc(self, group_login: str, book_slug: str) -> dict[str, Any]:
+        if self.auth_mode == "cookie":
+            book = self._find_web_book(group_login, book_slug)
+            return self.web_request("GET", "/catalog_nodes", {"book_id": book.get("id")})
         return self.request("GET", f"/repos/{urllib.parse.quote(group_login)}/{urllib.parse.quote(book_slug)}/toc")
 
     def get_repo_toc_tree(self, group_login: str, book_slug: str) -> list[dict[str, Any]]:
@@ -307,6 +372,9 @@ class YuqueClient:
         return []
 
     def get_repo_docs_page(self, group_login: str, book_slug: str, limit: int = 100, offset: int = 0) -> dict[str, Any]:
+        if self.auth_mode == "cookie":
+            book = self._find_web_book(group_login, book_slug)
+            return self.web_request("GET", "/docs", {"book_id": book.get("id"), "limit": limit, "offset": offset})
         return self.request(
             "GET",
             f"/repos/{urllib.parse.quote(group_login)}/{urllib.parse.quote(book_slug)}/docs",
@@ -326,10 +394,36 @@ class YuqueClient:
         return docs
 
     def get_doc_detail(self, group_login: str, book_slug: str, doc_id_or_slug: str) -> dict[str, Any]:
+        if self.auth_mode == "cookie":
+            book = self._find_web_book(group_login, book_slug)
+            payload = self.web_request("GET", f"/docs/{urllib.parse.quote(str(doc_id_or_slug))}", {"book_id": book.get("id")})
+            data = dict(payload.get("data", {}))
+            if "content" in data and "body_lake" not in data:
+                data["body_lake"] = data.get("content") or ""
+            return {"data": data}
         return self.request(
             "GET",
             f"/repos/{urllib.parse.quote(group_login)}/{urllib.parse.quote(book_slug)}/docs/{urllib.parse.quote(str(doc_id_or_slug))}",
         )
+
+    def get_web_books(self) -> list[dict[str, Any]]:
+        payload = self.web_request("GET", "/mine/books")
+        books = payload.get("data", [])
+        if not isinstance(books, list):
+            return []
+        return [_normalize_web_book(book) for book in books if isinstance(book, dict)]
+
+    def _find_web_book(self, group_login: str, book_slug: str) -> dict[str, Any]:
+        key = (group_login, book_slug)
+        if key in self._web_book_cache:
+            return self._web_book_cache[key]
+        for book in self.get_web_books():
+            if book.get("namespace") == f"{group_login}/{book_slug}" or (
+                book.get("slug") == book_slug and (book.get("user") or {}).get("login") == group_login
+            ):
+                self._web_book_cache[key] = book
+                return book
+        raise YuqueNotFoundError(f"未找到知识库 {group_login}/{book_slug}")
 
 
 def extract_data_list(payload: dict[str, Any]) -> list[dict[str, Any]]:
@@ -337,6 +431,17 @@ def extract_data_list(payload: dict[str, Any]) -> list[dict[str, Any]]:
     if isinstance(items, list):
         return items
     return []
+
+
+def _normalize_web_book(book: dict[str, Any]) -> dict[str, Any]:
+    user = book.get("user") or {}
+    login = user.get("login") or ""
+    slug = book.get("slug") or ""
+    normalized = dict(book)
+    if login and slug:
+        normalized["namespace"] = f"{login}/{slug}"
+    normalized["book_slug"] = slug
+    return normalized
 
 
 def _prepare_binary_url(url: str) -> str:

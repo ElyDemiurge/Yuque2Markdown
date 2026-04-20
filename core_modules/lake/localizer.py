@@ -13,7 +13,7 @@ from core_modules.export.writer import write_binary_file
 from core_modules.lake.models import MarkdownRenderResult, ResourceRef
 from core_modules.lake.resource_parser import extract_yuque_doc_slug
 
-YUQUE_ATTACHMENT_UNSUPPORTED_TEMPLATE = "发现 {count} 个语雀附件链接，官方 API 暂不支持下载，已保留原始链接"
+YUQUE_ATTACHMENT_COOKIE_REQUIRED_TEMPLATE = "发现 {count} 个语雀附件链接，使用 Token 登录时无法下载附件以及选择下载附件类型，已保留原始链接；如需下载附件，请切换到浏览器 Cookie 登录"
 
 
 def localize_markdown_assets(
@@ -24,19 +24,19 @@ def localize_markdown_assets(
     doc_slug_map: dict[str, str] | None = None,
     current_markdown_path: Path | None = None,
     attachment_suffixes: list[str] | None = None,
+    allow_attachment_downloads: bool = False,
 ) -> MarkdownRenderResult:
     markdown = render_result.markdown
     warnings = list(render_result.warnings)
     rewritten = 0
-    # `attachment_suffixes` 相关逻辑继续保留，等语雀官方补齐附件能力后可直接恢复使用。
     normalized_suffixes = normalize_attachment_suffixes(attachment_suffixes)
     attachment_resources = [resource for resource in render_result.resources if resource.kind == "attachment"]
 
     if doc_slug_map and current_markdown_path is not None:
         markdown, rewritten = rewrite_doc_links(markdown, render_result.resources, doc_slug_map, current_markdown_path)
 
-    if attachment_resources:
-        warnings.append(YUQUE_ATTACHMENT_UNSUPPORTED_TEMPLATE.format(count=len(attachment_resources)))
+    if attachment_resources and not allow_attachment_downloads:
+        warnings.append(YUQUE_ATTACHMENT_COOKIE_REQUIRED_TEMPLATE.format(count=len(attachment_resources)))
 
     asset_resources = [resource for resource in render_result.resources if resource.kind in {"image", "attachment"}]
     if not asset_resources:
@@ -56,7 +56,7 @@ def localize_markdown_assets(
             localized_resources.append(resource)
             continue
 
-        if not _should_download_resource(resource, normalized_suffixes):
+        if not _should_download_resource(resource, normalized_suffixes, allow_attachment_downloads):
             localized_resources.append(resource)
             continue
 
@@ -176,15 +176,18 @@ def replace_url(markdown: str, old_url: str, new_url: str) -> str:
     return re.sub(pattern, new_url, markdown)
 
 
-def _should_download_resource(resource: ResourceRef, attachment_suffixes: list[str]) -> bool:
+def _should_download_resource(resource: ResourceRef, attachment_suffixes: list[str], allow_attachment_downloads: bool) -> bool:
     """决定资源是否需要下载到本地。"""
     if resource.kind == "image":
         return True
     if resource.kind != "attachment":
         return False
-    # 当前仅本地化图片，语雀附件仍保留原始链接。
-    # 参数继续保留，避免未来恢复附件下载时再改外部调用链。
-    return False
+    if not allow_attachment_downloads:
+        return False
+    if attachment_suffixes == ["*"]:
+        return True
+    suffixes = _resource_suffix_candidates(resource)
+    return any(suffix in attachment_suffixes for suffix in suffixes)
 
 
 def _resource_suffix_candidates(resource: ResourceRef) -> list[str]:
@@ -195,6 +198,8 @@ def _resource_suffix_candidates(resource: ResourceRef) -> list[str]:
         if suffix and suffix not in candidates:
             candidates.append(suffix)
     return candidates
+
+
 
 
 def _is_valid_existing_asset(path: Path) -> bool:
