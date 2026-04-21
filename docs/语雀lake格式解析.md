@@ -1,10 +1,10 @@
 # 语雀 Lake 格式解析
 
-## 概述
+## 说明
 
-Lake 是语雀编辑器内部使用的文档格式，以 XML 形式存储在 API 响应的 `body_lake` 字段中。本工具会解析 `body_lake`，再将其转换为 Markdown。
+Lake 是语雀编辑器内部使用的文档格式，存在 API 响应的 `body_lake` 字段里。本工具会解析 `body_lake`，再转成 Markdown。
 
-**转换步骤**：
+转换过程：
 ```
 API 响应 → body_lake (XML) → 解析器 → Markdown
                               ↓
@@ -26,7 +26,7 @@ API 响应 → body_lake (XML) → 解析器 → Markdown
 <card type="inline" name="image" value="data:..." />
 ```
 
-解析前预处理：
+解析前会先做这些预处理：
 - 移除 `<!doctype lake>` 声明
 - 移除 `<meta ... />` 元信息标签
 - 将 `<br>` 统一转为 `<br />`（自闭合）
@@ -65,7 +65,7 @@ API 响应 → body_lake (XML) → 解析器 → Markdown
 | `u` | 下划线文本 | `__text__` |
 | `card` | 行内富媒体 | 递归调用 card 渲染 |
 
-### 关键属性
+### 常见属性
 
 #### card 通用属性
 
@@ -85,9 +85,9 @@ API 响应 → body_lake (XML) → 解析器 → Markdown
 - `id`：同 `data-lake-id`
 - `list` / `fid`：列表组标识
 
-## Card 机制
+## Card 格式
 
-Lake 里的图片、代码块等富媒体内容，并不是直接用 HTML 标签表示，而是放在 `<card>` 中，以 URL 编码后的 JSON 形式保存。
+Lake 里的图片、代码块这类富文本内容，不是直接放 HTML 标签里，而是写在 `<card>` 节点里，内容是 URL 编码后的 JSON。
 
 ### card 结构
 
@@ -200,7 +200,7 @@ print('hello')
 
 > 注：`table` 已支持基本转换，但复杂结构仍可能因为原始 HTML 结构异常而产生解析警告。
 
-## 转换完整性检查
+## 转换后检查
 
 解析完成后，工具会检查 Markdown 输出中是否残留以下模式：
 

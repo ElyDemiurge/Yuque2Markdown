@@ -39,7 +39,7 @@ def handle_export(
             return rate_limit_summary
     config = apply_session_to_config(config, session)
     options = build_export_options(config, session.repo_input, session.selected_doc_ids)
-    append_console_log(f"EXPORT_START repo={session.repo_input} scope={build_selected_docs_text(session)}")
+    append_console_log(f"开始导出: 知识库={session.repo_input} 范围={build_selected_docs_text(session)}")
     if config.ui_preferences.confirm_before_export:
         confirmed = run_confirmation("确认导出", build_confirmation_lines(config, session))
         if not confirmed:
@@ -55,7 +55,7 @@ def handle_export(
             progress_ui.update(snapshot)
 
     def _confirm_interrupt() -> bool:
-        append_console_log(f"EXPORT_INTERRUPT_CONFIRM repo={session.repo_input}")
+        append_console_log(f"确认中断导出: 知识库={session.repo_input}")
         return run_confirmation(
             "确认退出导出",
             [
@@ -83,14 +83,14 @@ def handle_export(
     except KeyboardInterrupt:
         session.status_message = "已取消导出"
         session.last_error_text = "用户中断导出"
-        append_console_log(f"EXPORT_ABORT repo={session.repo_input} reason=KeyboardInterrupt")
+        append_console_log(f"导出已中止: 知识库={session.repo_input} 原因=用户中断")
         show_message("导出已取消", ["已按用户要求中止导出。", "已完成的文档和 checkpoint 会保留，可稍后继续导出。"])
         return format_rate_limit(client.last_rate_limit)
     except Exception as exc:  # noqa: BLE001
         _, message = handle_export_error(exc)
         session.status_message = "导出失败"
         session.last_error_text = format_error_detail(exc)
-        append_console_log(f"EXPORT_FAIL repo={session.repo_input} error={session.last_error_text}")
+        append_console_log(f"导出失败: 知识库={session.repo_input} 错误={session.last_error_text}")
         show_message("导出失败", [message])
         return format_rate_limit(client.last_rate_limit)
     if config.ui_preferences.auto_save_after_export:
@@ -99,7 +99,5 @@ def handle_export(
     session.last_result_summary = result_lines_holder["lines"] or build_result_lines(config, session, result)
     session.status_message = "导出完成"
     session.last_error_text = ""
-    append_console_log(
-        f"EXPORT_SUCCESS repo={session.repo_input} exported={result.exported_docs} skipped={result.skipped_docs} failed={result.failed_docs}"
-    )
+    append_console_log(f"导出成功: 知识库={session.repo_input} 成功={result.exported_docs} 跳过={result.skipped_docs} 失败={result.failed_docs}")
     return format_rate_limit(client.last_rate_limit)

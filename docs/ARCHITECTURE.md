@@ -55,7 +55,10 @@ core_modules.export.exporter
 负责交互式终端 UI 和菜单驱动流程。
 
 - `app.py`：主循环与主菜单入口
-- `menu.py`：通用菜单组件、编辑框、确认框
+- `menu.py`：按平台分发菜单实现；当前版本实际使用 `menu_unix.py`
+- `menu_unix.py`：macOS 交互式菜单实现
+- `menu_windows.py`：Windows 菜单待实现占位，当前版本不会启用
+- `selector.py`：文档树选择器
 - `controllers/`：导出设置、运行设置、高级设置等子菜单控制器
 - `handlers/`：知识库连接、知识库选择、导出执行、配置更新等业务处理
 - `state/`：运行状态整理与状态栏展示辅助函数
@@ -95,15 +98,12 @@ core_modules.export.exporter
 
 Lake 格式的详细规则、卡片类型和警告规则见 [语雀lake格式解析.md](语雀lake格式解析.md)。
 
-### 其他模块
-
-- `selector.py`：文档树选择器，用于按目录结构选择需要导出的文档
-
 ## 主要执行顺序
 
 ### 1. 启动阶段
 
 - `yuque2markdown.py` 执行启动检查
+- 非 macOS 平台会在这里直接返回“不支持”
 - `config/store.py` 加载配置文件
 - `console/app.py` 初始化 `SessionState`
 - 控制台主菜单开始接收用户操作

@@ -10,15 +10,20 @@ from io import StringIO
 from typing import Callable, TypeVar
 
 from core_modules.export.models import ProgressSnapshot
+from core_modules.console.menu import _is_screen_too_small, _render_screen_too_small
 
 T = TypeVar("T")
 
 
 # Unicode 全角字符宽度（用于计算显示宽度）
+def _char_display_width(char: str) -> int:
+    return 2 if unicodedata.east_asian_width(char) in {"W", "F"} else 1
+
+
 def _display_width(text: str) -> int:
     width = 0
     for char in text:
-        width += 2 if unicodedata.east_asian_width(char) in {"W", "F"} else 1
+        width += _char_display_width(char)
     return width
 
 
@@ -48,7 +53,7 @@ def _fit(text: str, width: int) -> str:
     current = 0
     result: list[str] = []
     for char in visible:
-        char_width = 2 if unicodedata.east_asian_width(char) in {"W", "F"} else 1
+        char_width = _char_display_width(char)
         if current + char_width > width - 3:
             break
         result.append(char)
@@ -158,6 +163,14 @@ class ExportProgressUI:
         stdscr.timeout(150)
         completion_built = False
         while True:
+            height, width = stdscr.getmaxyx()
+            if _is_screen_too_small(height, width):
+                _render_screen_too_small(stdscr, title="导出进度", height=height, width=width)
+                stdscr.refresh()
+                key = stdscr.getch()
+                if key == 3:
+                    raise KeyboardInterrupt
+                continue
             snapshot = self.latest_snapshot
             if not thread.is_alive() and not self._finished:
                 self._finished = True

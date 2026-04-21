@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
+import sys
 
 from core_modules.config.models import (
     AUTH_MODE_COOKIE,
@@ -13,7 +14,7 @@ from core_modules.config.models import (
     normalize_auth_mode,
 )
 from core_modules.config.store import load_config
-from core_modules.browser_cookies import load_yuque_cookie_from_browsers
+from core_modules.auth.browser_cookies import load_yuque_cookie_from_browsers
 from core_modules.console.helpers import parse_action
 from core_modules.console.menu import InlineChoice, MenuItem, run_menu, show_message
 from core_modules.export.cli import build_client
@@ -34,8 +35,9 @@ def run_console_app() -> int:
     session = SessionState(repo_input=config.last_repo_input)
     rate_limit_summary = "暂无"
     repos: list[dict] = []
-    _append_console_log("进入控制台")
+    _append_console_event("应用启动", 平台=sys.platform, 登录方式=config.auth_mode or "token", 工作目录=str(Path.cwd()))
 
+    # 启动时只恢复配置，不主动刷新连接；连接检查留给用户显式触发。
     config.auth_mode = normalize_auth_mode(config.auth_mode)
     credential = active_auth_value(config)
     if credential:
@@ -58,7 +60,13 @@ def run_console_app() -> int:
             refresh_state=session.menu_refresh_state,
         )
         if action is None or action == "exit":
-            _append_console_log("退出控制台")
+            _append_console_event(
+                "应用退出",
+                登录方式=normalize_auth_mode(config.auth_mode),
+                知识库=session.repo_input or "-",
+                未保存=session.dirty,
+                连接正常=session.connection_ok,
+            )
             if session.dirty and config.ui_preferences.auto_save_after_export:
                 config = _persist_config(config, session, "on_exit")
             return 0
@@ -66,6 +74,7 @@ def run_console_app() -> int:
             state = session.menu_refresh_state
             session.menu_refresh_state = None
             session.transient_lines = []
+            # 异步刷新结束后，由主循环统一把结果折回到 session，避免线程里直接改 UI 状态。
             if state is not None:
                 state.done = True
                 state.lines = []
@@ -99,6 +108,7 @@ def run_console_app() -> int:
         if key in {"auth_mode_token", "auth_mode_cookie"}:
             new_mode = AUTH_MODE_COOKIE if key == "auth_mode_cookie" else AUTH_MODE_TOKEN
             if config.auth_mode != new_mode:
+                old_mode = normalize_auth_mode(config.auth_mode)
                 config.auth_mode = new_mode
                 session.connection_ok = False
                 session.current_user_label = "未检查"
@@ -111,10 +121,13 @@ def run_console_app() -> int:
                         config.cookie = result.cookie
                         config.persist_cookie = True
                         session.token_status_message = f"{result.message}，请刷新连接状态"
+                        _append_console_event("自动加载 Cookie 成功", 登录方式=new_mode, 知识库=session.repo_input or "-", 来源=result.source or "-", 说明=result.message)
                     else:
                         session.token_status_message = result.message
+                        _append_console_event("自动加载 Cookie 失败", 登录方式=new_mode, 知识库=session.repo_input or "-", 说明=result.message)
                         show_message("读取 Cookie 失败", [result.message])
                 session.dirty = True
+                _append_console_event("切换登录方式", 原方式=old_mode, 新方式=new_mode, 知识库=session.repo_input or "-")
                 repos = []
                 rate_limit_summary = "暂无"
                 config = _persist_config(config, session, "auth_mode_changed")
@@ -129,6 +142,7 @@ def run_console_app() -> int:
                     session.token_status_message = "已重新设置 Token，请刷新连接状态"
                 else:
                     session.token_status_message = "Token 已清空"
+                _append_console_event("更新 Token", 登录方式=normalize_auth_mode(config.auth_mode), 知识库=session.repo_input or "-", 已设置=bool(config.token), 长度=len(config.token))
                 session.dirty = True
                 config = _persist_config(config, session, "token_changed")
             repos = []
@@ -147,11 +161,13 @@ def run_console_app() -> int:
                 session.network_test_message = ""
                 session.token_status_message = f"{result.message}，请刷新连接状态"
                 session.dirty = True
+                _append_console_event("导入 Cookie 成功", 登录方式=AUTH_MODE_COOKIE, 知识库=session.repo_input or "-", 来源=result.source or "-", 说明=result.message)
                 repos = []
                 rate_limit_summary = "暂无"
                 config = _persist_config(config, session, "cookie_imported")
             else:
                 session.token_status_message = result.message
+                _append_console_event("导入 Cookie 失败", 登录方式=normalize_auth_mode(config.auth_mode), 知识库=session.repo_input or "-", 说明=result.message)
                 show_message("读取 Cookie 失败", [result.message])
             continue
         if key == "clear_token":
@@ -166,6 +182,7 @@ def run_console_app() -> int:
             repos = []
             rate_limit_summary = "暂无"
             session.dirty = True
+            _append_console_event("清空登录凭据", 登录方式=normalize_auth_mode(config.auth_mode), 知识库=session.repo_input or "-")
             config = _persist_config(config, session, "token_cleared")
             continue
         if key == "repo_input" and edited_value is not None:
@@ -217,6 +234,7 @@ def _build_client_from_config(
     network_backoff_seconds: float | None = None,
     max_backoff_seconds: float | None = None,
 ):
+    """按当前配置构造 YuqueClient，并允许连接检查场景覆盖部分超时/重试参数。"""
     defaults = config.export_defaults
     proxy = defaults.proxy
     proxy_host = proxy.host or None if proxy.enabled else None
@@ -241,17 +259,17 @@ def _build_client_from_config(
 
 def _handle_repo_input_inline(config: AppConfig, session: SessionState, value: str) -> bool:
     from core_modules.console.handlers.repo import handle_repo_input_inline as _handler
-    return _handler(config, session, value, build_client_from_config=_build_client_from_config)
+    return _handler(config, session, value, build_client_from_config=_build_client_from_config, append_console_log=_append_console_log)
 
 
 def _handle_repo_selection(config: AppConfig, session: SessionState, repos: list[dict], rate_limit_summary: str) -> bool:
     from core_modules.console.handlers.repo import handle_repo_selection as _handler
-    return _handler(config, session, repos, rate_limit_summary, build_client_from_config=_build_client_from_config)
+    return _handler(config, session, repos, rate_limit_summary, build_client_from_config=_build_client_from_config, append_console_log=_append_console_log)
 
 
 def _handle_doc_selection(config: AppConfig, session: SessionState, rate_limit_summary: str) -> tuple[str, bool]:
     from core_modules.console.handlers.repo import handle_doc_selection as _handler
-    return _handler(config, session, rate_limit_summary, build_client_from_config=_build_client_from_config)
+    return _handler(config, session, rate_limit_summary, build_client_from_config=_build_client_from_config, append_console_log=_append_console_log)
 
 
 def _handle_export(config: AppConfig, session: SessionState, rate_limit_summary: str) -> str:
@@ -411,6 +429,7 @@ def _refresh_connection_state(token: str, config: AppConfig, session: SessionSta
         config,
         session,
         build_client_from_config=_build_client_from_config,
+        list_accessible_repos=list_accessible_repos,
         build_connection_status=_build_connection_status,
         format_rate_limit=_format_rate_limit,
         format_error_detail=_format_error_detail,
@@ -420,10 +439,20 @@ def _refresh_connection_state(token: str, config: AppConfig, session: SessionSta
 
 
 def _append_console_log(message: str) -> None:
+    """写入控制台侧日志，和导出日志分开，方便排查菜单与状态流转问题。"""
     path = Path.cwd() / "yuque2markdown.console.log"
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     with path.open("a", encoding="utf-8") as handle:
         handle.write(f"[{timestamp}] {message}\n")
+
+
+def _append_console_event(event: str, **fields: object) -> None:
+    """将常见控制台动作拼成统一的单行日志格式。"""
+    parts = [event]
+    for key, value in fields.items():
+        text = str(value).replace("\n", "\\n")
+        parts.append(f"{key}={text}")
+    _append_console_log(" ".join(parts))
 
 
 def _build_status_detail(rate_limit_summary: str, error_text: str) -> str:

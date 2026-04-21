@@ -3,7 +3,14 @@ from __future__ import annotations
 import curses
 from dataclasses import dataclass, field
 
-from core_modules.console.menu import _display_width, _layout_frame, _render_framed_header
+from core_modules.console.menu import (
+    _draw_text,
+    _display_width,
+    _is_screen_too_small,
+    _layout_frame,
+    _render_framed_header,
+    _render_screen_too_small,
+)
 from core_modules.export.models import TocNode
 
 
@@ -42,6 +49,14 @@ def select_doc_ids(nodes: list[TocNode], initial_selected: set[int] | None = Non
     def run(stdscr) -> set[int]:
         curses.curs_set(0)
         while True:
+            height, width = stdscr.getmaxyx()
+            if _is_screen_too_small(height, width):
+                _render_screen_too_small(stdscr, title="选择文档", height=height, width=width)
+                stdscr.refresh()
+                key = stdscr.get_wch()
+                if key == "q":
+                    return state.selected
+                continue
             _render(stdscr, state)
             key = stdscr.get_wch()
             if key == curses.KEY_UP:
@@ -142,23 +157,23 @@ def _render(stdscr, state: _SelectorState) -> None:
     )
     row = divider_row + 1
     if state.filter_text:
-        stdscr.addnstr(row, left, _truncate(f"过滤: {state.filter_text}", content_width), content_width, curses.A_DIM)
+        _draw_text(stdscr, row, left, f"过滤: {state.filter_text}", width=content_width, attrs=curses.A_DIM)
         row += 1
     for line in state.summary_lines[:2]:
         if row >= height:
             break
-        stdscr.addnstr(row, left, _truncate(line, content_width), content_width, curses.A_DIM)
+        _draw_text(stdscr, row, left, line, width=content_width, attrs=curses.A_DIM)
         row += 1
     if row < height:
-        stdscr.addnstr(row, left, "─" * max(0, content_width), content_width, curses.A_DIM)
+        _draw_text(stdscr, row, left, "─" * max(0, content_width), width=content_width, attrs=curses.A_DIM)
         row += 1
 
     footer = _build_footer_line(state)
     content_height = max(1, height - row - 2)
     total = len(state.items)
     if total == 0:
-        stdscr.addnstr(row, left, _truncate("当前过滤条件下没有匹配的文档，按 Esc 清空过滤", content_width), content_width, curses.A_DIM)
-        stdscr.addnstr(height - 1, left, _truncate(footer, content_width), content_width, curses.A_DIM)
+        _draw_text(stdscr, row, left, "当前过滤条件下没有匹配的文档，按 Esc 清空过滤", width=content_width, attrs=curses.A_DIM)
+        _draw_text(stdscr, height - 1, left, footer, width=content_width, attrs=curses.A_DIM)
         return
 
     if state.index < state.top:
@@ -175,10 +190,10 @@ def _render(stdscr, state: _SelectorState) -> None:
         suffix = _suffix_for_node(item.node)
         label = _truncate(f"{marker} {expand_marker} {prefix}{item.node.title}{suffix}", content_width)
         attrs = curses.A_REVERSE if state.top + current_row - row == state.index else 0
-        stdscr.addnstr(current_row, left, label, content_width, attrs)
+        _draw_text(stdscr, current_row, left, label, width=content_width, attrs=attrs)
     if height - 2 >= row:
-        stdscr.addnstr(height - 2, left, "─" * max(0, content_width), content_width, curses.A_DIM)
-    stdscr.addnstr(height - 1, left, _truncate(footer, content_width), content_width, curses.A_DIM)
+        _draw_text(stdscr, height - 2, left, "─" * max(0, content_width), width=content_width, attrs=curses.A_DIM)
+    _draw_text(stdscr, height - 1, left, footer, width=content_width, attrs=curses.A_DIM)
 
 
 def _truncate(text: str, max_len: int) -> str:
@@ -351,7 +366,7 @@ def _prompt_filter(stdscr, state: _SelectorState) -> None:
             [],
         )
         prompt = f"过滤: {''.join(chars)}"
-        stdscr.addnstr(height - 1, left, _truncate(prompt, content_width), content_width, curses.A_DIM)
+        _draw_text(stdscr, height - 1, left, prompt, width=content_width, attrs=curses.A_DIM)
         stdscr.move(height - 1, min(left + len("过滤: ") + cursor, max(left, left + content_width - 1)))
         key = stdscr.get_wch()
         if key in ("\n", "\r"):

@@ -24,5 +24,5 @@ def persist_config(config: AppConfig, session: SessionState, reason: str, *, app
     session.dirty = False
     session.status_message = "配置已保存"
     session.transient_lines = [f"已保存配置 ({reason})"]
-    append_console_log(f"CONFIG_SAVE reason={reason} path={path.name}")
+    append_console_log(f"保存配置: 原因={reason} 文件={path.name}")
     return updated

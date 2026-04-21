@@ -1,7 +1,7 @@
 from core_modules.export.errors import YuqueRateLimitError
 from core_modules.version import APP_VERSION
 
-from core_modules.browser_cookies import BrowserCookieResult
+from core_modules.auth.browser_cookies import BrowserCookieResult
 from core_modules.config.models import AppConfig, SessionState
 from core_modules.console.app import (
     _build_client_from_config,

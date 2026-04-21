@@ -6,7 +6,6 @@ import threading
 
 from core_modules.config.models import AppConfig, SessionState, auth_mode_label, normalize_auth_mode
 from core_modules.console.menu import MenuRefreshState
-from core_modules.export.cli import list_accessible_repos
 from core_modules.export.errors import YuqueRateLimitError
 
 
@@ -16,6 +15,7 @@ def refresh_connection_state(
     session: SessionState,
     *,
     build_client_from_config,
+    list_accessible_repos,
     build_connection_status,
     format_rate_limit,
     format_error_detail,

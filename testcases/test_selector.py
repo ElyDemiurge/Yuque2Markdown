@@ -1,5 +1,5 @@
 from core_modules.export.models import TocNode
-from core_modules.selector import (
+from core_modules.console.selector import (
     _SelectorState,
     _build_footer_line,
     _collect_expandable_keys,

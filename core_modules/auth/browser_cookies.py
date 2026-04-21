@@ -2,19 +2,19 @@
 
 from __future__ import annotations
 
+import base64
+import ctypes
+import ctypes.wintypes
+import hashlib
+import json
+import os
+import platform
 import shutil
 import sqlite3
 import subprocess
 import tempfile
 import time
 from dataclasses import dataclass
-import hashlib
-import base64
-import ctypes
-import ctypes.wintypes
-import json
-import os
-import platform
 from pathlib import Path
 
 
@@ -25,6 +25,7 @@ YUQUE_COOKIE_DOMAIN = "yuque.com"
 @dataclass(slots=True)
 class BrowserCookieSource:
     """一个浏览器 Cookie 存储位置。"""
+
     name: str
     profile_root: Path
     safe_storage_service: str
@@ -33,6 +34,7 @@ class BrowserCookieSource:
 @dataclass(slots=True)
 class BrowserCookieResult:
     """浏览器 Cookie 读取结果。"""
+
     cookie: str
     source: str
     message: str
@@ -43,7 +45,8 @@ class BrowserCookieResult:
 
 
 def default_chromium_sources(home: Path | None = None) -> list[BrowserCookieSource]:
-    """返回 macOS 上常见 Chromium 系浏览器的 Cookie 目录。"""
+    """返回常见 Chromium 系浏览器的 Cookie 目录。"""
+
     root = home or Path.home()
     if platform.system() == "Windows":
         local_app_data = Path(os.environ.get("LOCALAPPDATA", root / "AppData" / "Local"))
@@ -79,6 +82,7 @@ def load_yuque_cookie_from_browsers(
         windows_key: bytes | None = None
         for cookie_db in _iter_cookie_databases(source.profile_root):
             checked += 1
+            # 同一个浏览器 profile 只取一次解密材料，避免重复访问钥匙串或 Local State。
             if platform.system() == "Windows":
                 if windows_key is None:
                     windows_key = _get_windows_chromium_key(source.profile_root)
@@ -111,6 +115,7 @@ def load_yuque_cookie_from_browsers(
 
 
 def _iter_cookie_databases(profile_root: Path) -> list[Path]:
+    """枚举 profile 下可能存在的 Chromium Cookie 数据库。"""
     if not profile_root.exists():
         return []
     candidates: list[Path] = []
@@ -131,9 +136,11 @@ def _read_cookies(
     safe_storage_password: bytes | None,
     windows_key: bytes | None,
 ) -> tuple[list[tuple[str, str]], int]:
+    """从单个 Cookie 数据库中提取语雀相关 Cookie。"""
     with tempfile.TemporaryDirectory() as tmp:
         copied_db = Path(tmp) / "Cookies"
         try:
+            # 先复制到临时目录再读取，避免浏览器占用锁导致 sqlite 打不开。
             shutil.copy2(cookie_db, copied_db)
         except OSError:
             return [], 0
@@ -155,7 +162,7 @@ def _read_cookies(
     cookies: list[tuple[str, str]] = []
     encrypted_count = 0
     seen_pairs: set[tuple[str, str]] = set()
-    for _host, name, value, encrypted_value, expires_utc in rows:
+    for host, name, value, encrypted_value, expires_utc in rows:
         if expires_utc and int(expires_utc) <= now_chrome:
             continue
         name = str(name or "").strip()
@@ -163,19 +170,24 @@ def _read_cookies(
         if not name:
             continue
         if value:
-            pair = (str(_host or ""), name)
+            pair = (str(host or ""), name)
             if pair not in seen_pairs:
                 cookies.append((name, value))
                 seen_pairs.add(pair)
             continue
         if encrypted_value:
             encrypted_bytes = bytes(encrypted_value)
+            # 明文 value 为空时再尝试解密，尽量复用浏览器原始存储逻辑。
             if platform.system() == "Windows":
                 decrypted = _decrypt_windows_chromium_cookie(encrypted_bytes, windows_key=windows_key)
             else:
-                decrypted = _decrypt_macos_chromium_cookie(encrypted_bytes, host_key=str(_host or ""), password=safe_storage_password)
+                decrypted = _decrypt_macos_chromium_cookie(
+                    encrypted_bytes,
+                    host_key=str(host or ""),
+                    password=safe_storage_password,
+                )
             if decrypted:
-                pair = (str(_host or ""), name)
+                pair = (str(host or ""), name)
                 if pair not in seen_pairs:
                     cookies.append((name, decrypted))
                     seen_pairs.add(pair)
@@ -186,6 +198,7 @@ def _read_cookies(
 
 def _get_safe_storage_password(service_name: str) -> bytes | None:
     """从 macOS 钥匙串读取 Chromium Safe Storage 口令。"""
+
     try:
         proc = subprocess.run(
             ["security", "find-generic-password", "-w", "-s", service_name],
@@ -334,12 +347,14 @@ def _windows_aes_gcm_decrypt(key: bytes, nonce: bytes, ciphertext: bytes, tag: b
                 ("pbMacContext", ctypes.POINTER(ctypes.c_ubyte)),
                 ("cbMacContext", ctypes.wintypes.ULONG),
                 ("cbAAD", ctypes.wintypes.ULONG),
-                ("cbData", ctypes.c_ulonglong),
+                ("cbData", ctypes.wintypes.ULONGLONG),
                 ("dwFlags", ctypes.wintypes.ULONG),
             ]
 
         nonce_buffer = ctypes.create_string_buffer(nonce)
         tag_buffer = ctypes.create_string_buffer(tag)
+        ciphertext_buffer = ctypes.create_string_buffer(ciphertext, len(ciphertext))
+        output_buffer = ctypes.create_string_buffer(len(ciphertext))
         auth_info = BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO()
         auth_info.cbSize = ctypes.sizeof(BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO)
         auth_info.dwInfoVersion = 1
@@ -347,26 +362,24 @@ def _windows_aes_gcm_decrypt(key: bytes, nonce: bytes, ciphertext: bytes, tag: b
         auth_info.cbNonce = len(nonce)
         auth_info.pbTag = ctypes.cast(tag_buffer, ctypes.POINTER(ctypes.c_ubyte))
         auth_info.cbTag = len(tag)
-
-        cipher_buffer = ctypes.create_string_buffer(ciphertext)
-        plain_buffer = ctypes.create_string_buffer(len(ciphertext))
-        plain_len = ctypes.wintypes.ULONG()
+        result_len = ctypes.wintypes.ULONG()
         result = bcrypt.BCryptDecrypt(
             key_handle,
-            ctypes.cast(cipher_buffer, ctypes.POINTER(ctypes.c_ubyte)),
+            ctypes.cast(ciphertext_buffer, ctypes.POINTER(ctypes.c_ubyte)),
             len(ciphertext),
             ctypes.byref(auth_info),
             None,
             0,
-            ctypes.cast(plain_buffer, ctypes.POINTER(ctypes.c_ubyte)),
+            ctypes.cast(output_buffer, ctypes.POINTER(ctypes.c_ubyte)),
             len(ciphertext),
-            ctypes.byref(plain_len),
+            ctypes.byref(result_len),
             0,
         )
         if result != STATUS_SUCCESS:
             return None
-        return plain_buffer.raw[:plain_len.value]
+        return output_buffer.raw[: result_len.value]
     finally:
         if key_handle:
             bcrypt.BCryptDestroyKey(key_handle)
-        bcrypt.BCryptCloseAlgorithmProvider(alg, 0)
+        if alg:
+            bcrypt.BCryptCloseAlgorithmProvider(alg, 0)

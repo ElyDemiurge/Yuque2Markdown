@@ -34,6 +34,7 @@ def test_handle_repo_input_inline_resets_previous_doc_selection() -> None:
             session,
             "new-group/new-book",
             build_client_from_config=fake_build_client_from_config,
+            append_console_log=lambda _message: None,
         )
     finally:
         repo_module.fetch_repo_toc = original
@@ -76,6 +77,7 @@ def test_handle_repo_input_inline_rejects_shared_repo() -> None:
             session,
             "b1ue/shared-book",
             build_client_from_config=fake_build_client_from_config,
+            append_console_log=lambda _message: None,
         )
     finally:
         repo_module.fetch_repo_toc = original_fetch
@@ -123,6 +125,7 @@ def test_handle_repo_selection_resets_previous_doc_selection_and_refreshes_count
             repos,
             "暂无",
             build_client_from_config=fake_build_client_from_config,
+            append_console_log=lambda _message: None,
         )
     finally:
         repo_module.run_select_list = original_select
@@ -157,6 +160,7 @@ def test_handle_repo_selection_rejects_shared_repo() -> None:
             repos,
             "暂无",
             build_client_from_config=lambda *_args, **_kwargs: object(),
+            append_console_log=lambda _message: None,
         )
     finally:
         repo_module.run_select_list = original_select

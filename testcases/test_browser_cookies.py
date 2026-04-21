@@ -5,7 +5,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-from core_modules.browser_cookies import BrowserCookieSource, load_yuque_cookie_from_browsers
+from core_modules.auth.browser_cookies import BrowserCookieSource, load_yuque_cookie_from_browsers
 
 
 def _create_cookie_db(path: Path, rows: list[tuple[str, str, str, bytes, int]]) -> None:
@@ -80,8 +80,8 @@ def test_load_yuque_cookie_uses_decrypted_value(tmp_path: Path, monkeypatch) -> 
     cookie_db = tmp_path / "Chrome" / "Default" / "Network" / "Cookies"
     _create_cookie_db(cookie_db, [(".yuque.com", "_yuque_session", "", b"v10encrypted", 0)])
 
-    monkeypatch.setattr("core_modules.browser_cookies._get_safe_storage_password", lambda _service: b"password")
-    monkeypatch.setattr("core_modules.browser_cookies._decrypt_macos_chromium_cookie", lambda *_args, **_kwargs: "session-value")
+    monkeypatch.setattr("core_modules.auth.browser_cookies._get_safe_storage_password", lambda _service: b"password")
+    monkeypatch.setattr("core_modules.auth.browser_cookies._decrypt_macos_chromium_cookie", lambda *_args, **_kwargs: "session-value")
 
     result = load_yuque_cookie_from_browsers(sources=[BrowserCookieSource("Chrome", tmp_path / "Chrome", "Chrome Safe Storage")])
 
@@ -101,8 +101,8 @@ def test_load_yuque_cookie_uses_windows_decryptor(tmp_path: Path, monkeypatch) -
     _create_cookie_db(cookie_db, [(".yuque.com", "_yuque_session", "", b"v10encrypted", 0)])
 
     monkeypatch.setattr("platform.system", lambda: "Windows")
-    monkeypatch.setattr("core_modules.browser_cookies._get_windows_chromium_key", lambda _root: b"windows-key")
-    monkeypatch.setattr("core_modules.browser_cookies._decrypt_windows_chromium_cookie", lambda *_args, **_kwargs: "session-value")
+    monkeypatch.setattr("core_modules.auth.browser_cookies._get_windows_chromium_key", lambda _root: b"windows-key")
+    monkeypatch.setattr("core_modules.auth.browser_cookies._decrypt_windows_chromium_cookie", lambda *_args, **_kwargs: "session-value")
 
     result = load_yuque_cookie_from_browsers(sources=[BrowserCookieSource("Chrome", tmp_path / "Chrome", "")])
 
