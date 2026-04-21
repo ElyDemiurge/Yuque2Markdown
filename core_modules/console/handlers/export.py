@@ -1,8 +1,11 @@
 """控制台导出流程处理器。"""
 
+import threading
+
 from core_modules.config.models import AppConfig, SessionState, active_auth_value, auth_mode_label, build_export_options, normalize_auth_mode
 from core_modules.console.menu import run_confirmation, show_message
 from core_modules.export.cli import execute_export, handle_export_error
+from core_modules.export.errors import ExportCancelledError
 from core_modules.export.progress import ExportProgressUI
 
 
@@ -46,6 +49,9 @@ def handle_export(
             session.status_message = "已取消导出"
             return rate_limit_summary
     client = build_client_from_config(config, credential)
+    cancel_event = threading.Event()
+    if hasattr(client, "set_cancel_event"):
+        client.set_cancel_event(cancel_event)
     progress_ui = ExportProgressUI()
 
     def _on_progress(snapshot) -> None:
@@ -56,7 +62,7 @@ def handle_export(
 
     def _confirm_interrupt() -> bool:
         append_console_log(f"确认中断导出: 知识库={session.repo_input}")
-        return run_confirmation(
+        confirmed = run_confirmation(
             "确认退出导出",
             [
                 "检测到 Ctrl+C 中断请求。",
@@ -66,6 +72,9 @@ def handle_export(
             confirm_label="退出导出",
             cancel_label="继续导出",
         )
+        if confirmed:
+            cancel_event.set()
+        return confirmed
 
     result_lines_holder: dict[str, list[str]] = {"lines": []}
 
@@ -81,6 +90,12 @@ def handle_export(
             on_complete=_build_completion_lines,
         )
     except KeyboardInterrupt:
+        session.status_message = "已取消导出"
+        session.last_error_text = "用户中断导出"
+        append_console_log(f"导出已中止: 知识库={session.repo_input} 原因=用户中断")
+        show_message("导出已取消", ["已按用户要求中止导出。", "已完成的文档和 checkpoint 会保留，可稍后继续导出。"])
+        return format_rate_limit(client.last_rate_limit)
+    except ExportCancelledError:
         session.status_message = "已取消导出"
         session.last_error_text = "用户中断导出"
         append_console_log(f"导出已中止: 知识库={session.repo_input} 原因=用户中断")

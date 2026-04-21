@@ -122,7 +122,7 @@ def test_progress_ui_displays_live_current_doc_elapsed(monkeypatch):
         current_doc_resources=3,
     )
     parts = ui._collect_doc_stat_parts(snapshot)
-    assert parts[0] == "耗时 2.8s"
+    assert parts[0] == "耗时 2s"
 
 
 def test_progress_ui_displays_total_export_elapsed(monkeypatch):
@@ -137,4 +137,4 @@ def test_progress_ui_displays_total_export_elapsed(monkeypatch):
         waiting_docs=3,
         warning_count=4,
     )
-    assert "总耗时 11.5s" in ui._plain_stats_line(snapshot)
+    assert "总耗时 11s" in ui._plain_stats_line(snapshot)

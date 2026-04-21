@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import http.client
+import threading
 import urllib.error
 
 from core_modules.export.client import YuqueClient
-from core_modules.export.errors import YuqueNetworkError, YuqueRateLimitError
+from core_modules.export.errors import ExportCancelledError, YuqueNetworkError, YuqueRateLimitError
 
 
 class _FakeResponse:
@@ -123,3 +124,17 @@ def test_web_request_raises_network_error_after_retries() -> None:
         pass
     else:
         raise AssertionError("expected YuqueNetworkError")
+
+
+def test_request_raises_cancelled_before_network_call() -> None:
+    client = _RetryingClient([_FakeResponse(b'{"data":{"id":1}}', {"Content-Type": "application/json"})])
+    cancel_event = threading.Event()
+    cancel_event.set()
+    client.set_cancel_event(cancel_event)
+
+    try:
+        client.request("GET", "/user")
+    except ExportCancelledError as exc:
+        assert "用户中止导出" in str(exc)
+    else:
+        raise AssertionError("expected ExportCancelledError")

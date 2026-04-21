@@ -36,8 +36,8 @@ TEXT_HELP_LINES = ["输入内容后 Enter 确认 | Esc 取消 | ←→ 移动 | 
 CONFIRM_HELP_LINES = ["↑↓ 移动 | Enter 确认 | q 取消"]
 SELECT_HELP_LINES = ["↑↓ 移动 | Enter 选择 | q 返回 | 输入开始过滤 | / 过滤模式 | Backspace 清空"]
 MESSAGE_HELP_LINES = ["任意键返回"]
-MIN_SCREEN_WIDTH = 112
-MIN_SCREEN_HEIGHT = 28
+MIN_SCREEN_WIDTH = 160
+MIN_SCREEN_HEIGHT = 50
 
 
 @dataclass(slots=True)
@@ -63,10 +63,20 @@ def _layout_frame(height: int, width: int, help_text: list[str], item_count: int
 
 
 def _screen_too_small_message(height: int, width: int) -> list[str]:
+    missing_width = max(0, MIN_SCREEN_WIDTH - width)
+    missing_height = max(0, MIN_SCREEN_HEIGHT - height)
+    if missing_width > 0 and missing_height > 0:
+        hint = f"宽度还差 {missing_width} 列，高度还差 {missing_height} 行。"
+    elif missing_width > 0:
+        hint = f"宽度还差 {missing_width} 列。"
+    elif missing_height > 0:
+        hint = f"高度还差 {missing_height} 行。"
+    else:
+        hint = "请放大终端窗口后继续。"
     return [
-        f"当前窗口过小：{width}x{height}",
-        f"至少需要：{MIN_SCREEN_WIDTH}x{MIN_SCREEN_HEIGHT}",
-        "请放大终端窗口后继续。",
+        f"当前窗口大小：{width}x{height}",
+        f"最低要求：{MIN_SCREEN_WIDTH}x{MIN_SCREEN_HEIGHT}",
+        hint,
     ]
 
 
@@ -294,7 +304,16 @@ def _render_menu_frame(
     if divider_row < height:
         _draw_text(stdscr, divider_row, left, "─" * max(0, content_width), width=content_width)
     row = divider_row + 1
-    row = _render_transient_lines(stdscr, transient_lines=transient_lines, row=row, left=left, content_width=content_width, height=height)
+    reserved_footer = _reserved_status_rows(lines)
+    content_bottom = max(row, height - reserved_footer)
+    row = _render_transient_lines(
+        stdscr,
+        transient_lines=transient_lines,
+        row=row,
+        left=left,
+        content_width=content_width,
+        height=content_bottom,
+    )
     edit_cursor_pos, menu_end_row = _render_menu_items(
         stdscr,
         items,
@@ -302,7 +321,7 @@ def _render_menu_frame(
         row,
         left,
         content_width,
-        height,
+        content_bottom,
         editing_index,
         edit_chars,
         edit_cursor,
@@ -1005,6 +1024,7 @@ def _status_attr(color: int, attrs: int) -> int:
 def _render_status_lines(stdscr, status_lines: list[str], content_end: int, left: int, content_width: int, height: int) -> None:
     if not status_lines:
         return
+    _height, width = stdscr.getmaxyx()
     visible_lines = [_truncate(line, content_width) for line in status_lines if line]
     if not visible_lines:
         return
@@ -1017,7 +1037,22 @@ def _render_status_lines(stdscr, status_lines: list[str], content_end: int, left
         row = start_row + offset
         if 0 <= row < height:
             text, attrs = _status_line_display(line)
-            _draw_text(stdscr, row, left, text, width=content_width, attrs=attrs)
+            line_width = content_width
+            if row == height - 1:
+                size_text = f"当前窗口大小: {width}x{height}"
+                size_width = _display_width(size_text)
+                if size_width + 1 < content_width:
+                    line_width = content_width - size_width - 1
+                    size_x = left + content_width - size_width
+                    _draw_text(stdscr, row, size_x, size_text, width=size_width, attrs=curses.A_DIM)
+            _draw_text(stdscr, row, left, text, width=line_width, attrs=attrs)
+
+
+def _reserved_status_rows(status_lines: list[str]) -> int:
+    visible_lines = [line for line in status_lines if line]
+    if not visible_lines:
+        return 0
+    return len(visible_lines) + 1
 
 
 def _status_line_display(line: str) -> tuple[str, int]:

@@ -32,9 +32,9 @@ core_modules.export.exporter
 ## 根目录入口与辅助文件
 
 - `yuque2markdown.py`
-  程序主入口。负责 Python 版本和标准库模块检查、终端环境检查，并启动交互式控制台。
+  程序主入口。执行启动前检查，然后进入交互式控制台。
 - `regenerate_md.py`
-  维护脚本。遍历 `output/` 中已有的 `.lake` 与 `.yuque.json` 文件，重新生成对应 Markdown；会优先复用本地 `assets/`，并在具备 Token 时下载缺失图片。
+  维护脚本。遍历 `output/` 中已有的 `.lake` 与 `.yuque.json`，重新生成对应 Markdown；本地已有 `assets/` 时优先复用，缺失图片且当前配置里有 Token 时再补充下载。
 - `pytest.ini`
   pytest 统一入口配置，约定测试目录为 `testcases/`。
 - `output/`
@@ -44,15 +44,21 @@ core_modules.export.exporter
 
 ### `core_modules/config/`
 
-负责配置模型、加载保存和校验。
+该目录用于配置模型、配置读写和配置校验。
 
 - `models.py`：配置与运行时数据结构
 - `store.py`：配置文件读写
 - `validator.py`：配置校验规则
 
+### `core_modules/auth/`
+
+该目录用于登录凭据相关处理。
+
+- `browser_cookies.py`：从本机浏览器读取语雀 Cookie，并处理解密
+
 ### `core_modules/console/`
 
-负责交互式终端 UI 和菜单驱动流程。
+该目录用于交互式终端界面和菜单流程。
 
 - `app.py`：主循环与主菜单入口
 - `menu.py`：按平台分发菜单实现；当前版本实际使用 `menu_unix.py`
@@ -64,19 +70,19 @@ core_modules.export.exporter
 - `state/`：运行状态整理与状态栏展示辅助函数
 - `helpers.py`：控制台共享工具函数
 
-模块分工如下：
+子目录分工如下：
 
 - `controllers/` 更偏菜单组织与交互流程
 - `handlers/` 更偏业务动作与状态更新
-- `state/` 负责把运行时数据整理成可展示文本
+- `state/` 负责将运行时数据整理成可显示文本
 
 ### `core_modules/export/`
 
-负责导出执行、API 调用、断点恢复、日志和文件写入。
+该目录用于导出执行、API 调用、断点恢复、日志和文件写入。
 
 - `client.py`：语雀 OpenAPI / 网页端接口客户端
 - `cli.py`：导出服务入口，连接控制台层与导出层
-- `exporter.py`：导出流程控制器，负责遍历 TOC、拉取文档、转换与写入文件
+- `exporter.py`：导出流程控制器，负责遍历 TOC、拉取文档、转换并写入文件
 - `checkpoint.py`：断点保存与恢复
 - `file_naming.py`：安全文件名与路径处理
 - `logger.py`：导出日志记录
@@ -89,7 +95,7 @@ core_modules.export.exporter
 
 ### `core_modules/lake/`
 
-负责 Lake 格式解析、资源提取、图片下载和链接改写。
+该目录用于 Lake 解析、资源提取、图片下载和链接改写。
 
 - `converter.py`：Lake -> Markdown
 - `resource_parser.py`：从 Markdown 中提取图片、附件、文档链接等资源引用
@@ -97,6 +103,8 @@ core_modules.export.exporter
 - `models.py`：Lake 转换过程中的数据结构
 
 Lake 格式的详细规则、卡片类型和警告规则见 [语雀lake格式解析.md](语雀lake格式解析.md)。
+
+当前版本里，文档树选择器位于 `core_modules/console/selector.py`。
 
 ## 主要执行顺序
 
@@ -199,21 +207,21 @@ Lake 格式的详细规则、卡片类型和警告规则见 [语雀lake格式解
 
 ### 2. 控制台层与导出层分离
 
-- `console/` 负责交互、状态和菜单
-- `export/` 负责 API、导出流程和文件写入
+- `console/` 处理交互、状态和菜单
+- `export/` 处理 API、导出流程和文件写入
 
 ### 3. 导出流程可恢复
 
 - 使用 `checkpoint.py` 保存文档级别进度
 - 支持中断后继续，减少重复工作
 
-### 4. 安全优先
+### 4. 安全约束
 
 - `file_naming.py` 对文件名做清洗
 - `safe_join()` 防止路径遍历
 - `validator.py` 校验配置范围和格式
 
-### 5. 转换与下载解耦
+### 5. 转换与下载分离
 
 - `converter.py` 专注文本转换
 - `resource_parser.py` 负责识别资源

@@ -7,6 +7,12 @@ from core_modules.console.handlers.export import handle_export
 class _DummyClient:
     last_rate_limit = {"limit": None, "remaining": None, "reset": None}
 
+    def __init__(self) -> None:
+        self.cancel_event = None
+
+    def set_cancel_event(self, event) -> None:
+        self.cancel_event = event
+
 
 class _InterruptingProgressUI:
     """模拟导出过程中触发 Ctrl+C，并检查确认框按钮文案。"""
@@ -44,12 +50,13 @@ def test_handle_export_interrupt_confirmation_uses_clear_labels(monkeypatch) -> 
     monkeypatch.setattr("core_modules.console.handlers.export.run_confirmation", fake_run_confirmation)
     monkeypatch.setattr("core_modules.console.handlers.export.ExportProgressUI", _InterruptingProgressUI)
     monkeypatch.setattr("core_modules.console.handlers.export.show_message", lambda *_args, **_kwargs: None)
+    client = _DummyClient()
 
     result = handle_export(
         config,
         session,
         "暂无",
-        build_client_from_config=lambda *_args, **_kwargs: _DummyClient(),
+        build_client_from_config=lambda *_args, **_kwargs: client,
         apply_session_to_config=lambda cfg, _session: cfg,
         persist_config=lambda cfg, _session, _reason: cfg,
         append_console_log=lambda _message: None,
@@ -61,6 +68,7 @@ def test_handle_export_interrupt_confirmation_uses_clear_labels(monkeypatch) -> 
     )
 
     assert result == "暂无"
+    assert client.cancel_event is not None and client.cancel_event.is_set() is True
     assert captured["title"] == "确认退出导出"
     assert captured["confirm_label"] == "退出导出"
     assert captured["cancel_label"] == "继续导出"

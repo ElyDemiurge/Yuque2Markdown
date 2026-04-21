@@ -190,6 +190,13 @@ def _should_download_resource(resource: ResourceRef, attachment_suffixes: list[s
     return any(suffix in attachment_suffixes for suffix in suffixes)
 
 
+def is_critical_resource_failure(resource: ResourceRef) -> bool:
+    """判断资源下载失败是否应将整篇文档视为失败。"""
+    parsed = urlparse(resource.normalized_url)
+    host = parsed.netloc.lower()
+    return "yuque.com" in host or "cdn.nlark.com" in host or "yuqueusercontent.com" in host or "aliyuncs.com" in host
+
+
 def _resource_suffix_candidates(resource: ResourceRef) -> list[str]:
     """提取资源可能的扩展名候选。"""
     candidates: list[str] = []

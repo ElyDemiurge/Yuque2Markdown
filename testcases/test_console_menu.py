@@ -61,3 +61,5 @@ def test_screen_too_small_message_contains_current_and_min_size() -> None:
 
     assert "80x20" in lines[0]
     assert f"{MIN_SCREEN_WIDTH}x{MIN_SCREEN_HEIGHT}" in lines[1]
+    assert "宽度还差" in lines[2]
+    assert "高度还差" in lines[2]

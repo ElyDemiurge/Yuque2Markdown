@@ -2,7 +2,7 @@
 
 ## 适用范围
 
-这份文档主要覆盖：
+这份文档主要覆盖以下排查场景：
 
 - Token 无效、Cookie 无效或无法访问语雀
 - 代理配置错误或网络不可达
@@ -85,7 +85,7 @@
 4. 如果只有资源下载失败，而文档 API 正常，说明问题可能出在资源域名访问而不是 API 访问。
 5. 如果使用 Token 登录，语雀附件不会下载；这是当前版本的预期行为。
 
-### 建议
+### 排查建议
 
 - 临时网络波动时先重试，不必马上改代码。
 - 如果代理只对部分域名可达，需要同时验证语雀 API 域名和资源 CDN 域名。
@@ -169,7 +169,7 @@ python -m pytest testcases/test_markdown_converter.py
 python -m pytest testcases/test_localizer.py testcases/test_export_flow.py
 ```
 
-### 实用建议
+### 建议
 
 - Lake 相关问题优先写最小复现测试，不要直接依赖完整导出样本。
 - 如果只修了转换逻辑，可用 `regenerate_md.py` 根据 `.lake` 重新生成 Markdown，不必重新拉取全部文档。

@@ -64,6 +64,8 @@ def _fit(text: str, width: int) -> str:
 class ExportProgressUI:
     """导出进度 UI，支持实时更新、警告滚动查看与中断确认。"""
 
+    HISTORY_VISIBLE_ROWS = 3
+
     RESET = "\033[0m"
     BOLD = "\033[1m"
     DIM = "\033[2m"
@@ -84,6 +86,13 @@ class ExportProgressUI:
         self.latest_snapshot = ProgressSnapshot()
         self.completion_lines: list[str] = []
         self.history_scroll = 0
+        self.section_focus = 0
+        self.section_scrolls = {
+            "recent_completed": 0,
+            "recent_failed": 0,
+            "waiting_preview": 0,
+            "history": 0,
+        }
         self._last_warning: str | None = None
         self._last_error: str | None = None
 
@@ -135,6 +144,8 @@ class ExportProgressUI:
             except KeyboardInterrupt:
                 if on_interrupt is not None and not on_interrupt():
                     continue
+                while thread.is_alive():
+                    time.sleep(0.05)
                 raise
 
         if result["error"] is not None:
@@ -183,21 +194,23 @@ class ExportProgressUI:
             if not thread.is_alive():
                 stdscr.timeout(-1)
                 key = stdscr.getch()
+                if key == curses.KEY_LEFT:
+                    self.section_focus = max(0, self.section_focus - 1)
+                    continue
+                if key == curses.KEY_RIGHT:
+                    self.section_focus = min(3, self.section_focus + 1)
+                    continue
                 if key == curses.KEY_UP:
-                    self.history_scroll = max(0, self.history_scroll - 1)
-                    self._clamp_history_scroll()
+                    self._scroll_active_section(-1)
                     continue
                 if key == curses.KEY_DOWN:
-                    self.history_scroll += 1
-                    self._clamp_history_scroll()
+                    self._scroll_active_section(1)
                     continue
                 if key == curses.KEY_PPAGE:
-                    self.history_scroll = max(0, self.history_scroll - 5)
-                    self._clamp_history_scroll()
+                    self._scroll_active_section(-self.HISTORY_VISIBLE_ROWS)
                     continue
                 if key == curses.KEY_NPAGE:
-                    self.history_scroll += 5
-                    self._clamp_history_scroll()
+                    self._scroll_active_section(self.HISTORY_VISIBLE_ROWS)
                     continue
                 break
             key = stdscr.getch()
@@ -205,15 +218,18 @@ class ExportProgressUI:
                 continue
             if key == 3:
                 raise KeyboardInterrupt
-            if key == curses.KEY_UP:
-                self.history_scroll = max(0, self.history_scroll - 1)
+            if key == curses.KEY_LEFT:
+                self.section_focus = max(0, self.section_focus - 1)
+            elif key == curses.KEY_RIGHT:
+                self.section_focus = min(3, self.section_focus + 1)
+            elif key == curses.KEY_UP:
+                self._scroll_active_section(-1)
             elif key == curses.KEY_DOWN:
-                self.history_scroll += 1
+                self._scroll_active_section(1)
             elif key == curses.KEY_PPAGE:
-                self.history_scroll = max(0, self.history_scroll - 5)
+                self._scroll_active_section(-self.HISTORY_VISIBLE_ROWS)
             elif key == curses.KEY_NPAGE:
-                self.history_scroll += 5
-            self._clamp_history_scroll()
+                self._scroll_active_section(self.HISTORY_VISIBLE_ROWS)
 
     def _render_ansi(self, snapshot: ProgressSnapshot) -> None:
         _, raw_width = self.stream.getwinsize() if hasattr(self.stream, "getwinsize") else (None, 100)
@@ -255,10 +271,11 @@ class ExportProgressUI:
         )
         for line in self._format_history_ansi(content_width):
             lines.append((left, line))
-        log_path = str(snapshot.details.get("log_path") or "")
-        if log_path:
+        footer_lines = self._build_footer_lines(snapshot)
+        if footer_lines:
             lines.append((left, sep))
-            lines.append((left, self._section_value("日志", log_path, self.CYAN, content_width)))
+            for text, _attr in footer_lines:
+                lines.append((left, _fit(text, content_width)))
         lines.append((left, sep))
         if self._finished:
             button_text = self._build_return_button()
@@ -287,9 +304,9 @@ class ExportProgressUI:
         stdscr.clear()
         height, width = stdscr.getmaxyx()
         help_lines = (
-            ["任意键返回 | ↑↓ 滚动警告 | PgUp/PgDn 快速滚动"]
+            ["任意键返回 | ←→ 切换区块 | ↑↓ 滚动区块 | PgUp/PgDn 快速滚动"]
             if self._finished
-            else ["Ctrl+C 退出确认 | ↑↓ 滚动警告 | PgUp/PgDn 快速滚动"]
+            else ["Ctrl+C 退出确认 | ←→ 切换区块 | ↑↓ 滚动区块 | PgUp/PgDn 快速滚动"]
         )
         content_width = min(width - 1, max(60, min(128, width - 4)))
         left = max(0, (width - content_width) // 2)
@@ -328,6 +345,7 @@ class ExportProgressUI:
         if rate_line:
             fixed_lines.append(("── 限流 ──", self._curses_attr(curses, "section")))
             fixed_lines.append((rate_line, self._curses_attr(curses, "rate_limit")))
+        scroll_sections: list[tuple[str, str, list[str], str]] = []
         if self._finished and self.completion_lines:
             fixed_lines.extend(
                 [
@@ -343,38 +361,26 @@ class ExportProgressUI:
                     ("── 正在进行 ──", self._curses_attr(curses, "section")),
                 ]
             )
-            fixed_lines.extend((line, self._curses_attr(curses, "active")) for line in self._plain_list(snapshot.active_tasks, "无活动任务", limit=3))
-            fixed_lines.extend(
+            fixed_lines.extend((line, self._curses_attr(curses, "active")) for line in self._plain_list(snapshot.active_tasks, "暂无", limit=3))
+            waiting_titles = snapshot.details.get("_waiting_titles")
+            if not isinstance(waiting_titles, list):
+                waiting_titles = list(snapshot.waiting_preview)
+            scroll_sections.extend(
                 [
-                    ("─" * content_width, self._curses_attr(curses, "divider")),
-                    ("── 最近完成 ──", self._curses_attr(curses, "section")),
+                    ("recent_completed", "已完成", self._plain_list(snapshot.recent_completed, "暂无", limit=None), "completed"),
+                    ("recent_failed", "失败", self._plain_list(snapshot.recent_failed, "暂无", limit=None), "failed"),
+                    ("waiting_preview", "等待队列", self._plain_list(waiting_titles, "暂无", limit=None), "waiting"),
                 ]
             )
-            fixed_lines.extend((line, self._curses_attr(curses, "completed")) for line in self._plain_list(snapshot.recent_completed, "暂无完成记录", limit=3))
-            fixed_lines.extend(
-                [
-                    ("─" * content_width, self._curses_attr(curses, "divider")),
-                    ("── 最近失败 ──", self._curses_attr(curses, "section")),
-                ]
-            )
-            fixed_lines.extend((line, self._curses_attr(curses, "failed")) for line in self._plain_list(snapshot.recent_failed, "暂无失败记录", limit=3))
-            fixed_lines.extend(
-                [
-                    ("─" * content_width, self._curses_attr(curses, "divider")),
-                    ("── 等待队列 ──", self._curses_attr(curses, "section")),
-                ]
-            )
-            fixed_lines.extend((line, self._curses_attr(curses, "waiting")) for line in self._plain_list(snapshot.waiting_preview, "队列为空", limit=3))
-        fixed_lines.extend(
-            [
-                ("─" * content_width, self._curses_attr(curses, "divider")),
-                ("── 警告/异常 ──", self._curses_attr(curses, "section")),
-            ]
-        )
+        scroll_sections.append(("history", "警告/异常", self._plain_history_lines(content_width), "warning"))
 
         footer_lines = self._build_footer_lines(snapshot)
-        reserved_footer = len(footer_lines) + 1
-        available_warning_rows = max(3, height - row - len(fixed_lines) - reserved_footer)
+        footer_block_rows = len(footer_lines)
+        if footer_lines:
+            footer_block_rows += 1
+        if self._finished:
+            footer_block_rows += 1
+        available_section_rows = self.HISTORY_VISIBLE_ROWS
 
         for text, attr in fixed_lines:
             if row >= height:
@@ -382,17 +388,26 @@ class ExportProgressUI:
             stdscr.addnstr(row, left, _fit(text, content_width), content_width, attr)
             row += 1
 
-        history_lines = self._plain_history_lines(content_width)
-        visible_history, scroll_label = self._slice_history_lines(history_lines, available_warning_rows)
-        for line in visible_history:
+        for section_index, (section_key, title_text, section_lines, role) in enumerate(scroll_sections):
             if row >= height:
                 break
-            history_attr = self._curses_attr(curses, "warning") if "[!]" in line else self._curses_attr(curses, "error")
-            stdscr.addnstr(row, left, _fit(line, content_width), content_width, history_attr)
+            title_attr = self._curses_attr(curses, "section")
+            if section_index == self.section_focus:
+                title_attr |= curses.A_REVERSE
+            visible_lines, scroll_label = self._slice_section_lines(section_key, section_lines, available_section_rows)
+            display_label = scroll_label
+            if section_key == "history" and scroll_label.startswith("警告 "):
+                display_label = scroll_label[len("警告 "):]
+            stdscr.addnstr(row, left, _fit(f"── {title_text} ── {display_label}", content_width), content_width, title_attr)
             row += 1
-        if row < height:
-            stdscr.addnstr(row, left, _fit(scroll_label, content_width), content_width, self._curses_attr(curses, "help"))
-            row += 1
+            for line in visible_lines:
+                if row >= height:
+                    break
+                line_attr = self._curses_attr(curses, role)
+                if section_key == "history":
+                    line_attr = self._curses_attr(curses, "warning") if "[!]" in line else self._curses_attr(curses, "error")
+                stdscr.addnstr(row, left, _fit(line, content_width), content_width, line_attr)
+                row += 1
 
         if row < height:
             stdscr.addnstr(row, left, "─" * max(0, content_width), content_width, self._curses_attr(curses, "divider"))
@@ -451,7 +466,7 @@ class ExportProgressUI:
         parts: list[str] = []
         current_doc_elapsed_ms = self._current_doc_elapsed_ms(snapshot)
         if current_doc_elapsed_ms > 0:
-            parts.append(f"耗时 {current_doc_elapsed_ms / 1000:.1f}s")
+            parts.append(f"耗时 {current_doc_elapsed_ms // 1000}s")
         if snapshot.current_doc_warnings > 0:
             parts.append(self._colorize(f"[!] {snapshot.current_doc_warnings} 警告", self.YELLOW))
         if snapshot.current_doc_resources > 0:
@@ -471,7 +486,7 @@ class ExportProgressUI:
         parts = [self._colorize(f"{label} {count}", color if count > 0 else self._dim_gray()) for label, count, color in items]
         export_elapsed_ms = self._export_elapsed_ms(snapshot)
         if export_elapsed_ms > 0:
-            parts.append(self._colorize(f"总耗时 {export_elapsed_ms / 1000:.1f}s", self.CYAN))
+            parts.append(self._colorize(f"总耗时 {export_elapsed_ms // 1000}s", self.CYAN))
         return "  " + " │ ".join(parts)
 
     def _plain_stats_line(self, snapshot: ProgressSnapshot) -> str:
@@ -481,7 +496,7 @@ class ExportProgressUI:
         )
         export_elapsed_ms = self._export_elapsed_ms(snapshot)
         if export_elapsed_ms > 0:
-            line += f" | 总耗时 {export_elapsed_ms / 1000:.1f}s"
+            line += f" | 总耗时 {export_elapsed_ms // 1000}s"
         return line
 
     def _current_doc_elapsed_ms(self, snapshot: ProgressSnapshot) -> int:
@@ -505,16 +520,17 @@ class ExportProgressUI:
             parts.append(f"Reset {snapshot.rate_limit_reset}")
         return "  " + " | ".join(parts)
 
-    def _plain_list(self, items: list[str], empty_text: str, *, limit: int) -> list[str]:
+    def _plain_list(self, items: list[str], empty_text: str, *, limit: int | None) -> list[str]:
         if not items:
             return [f"  - {empty_text}"]
-        return [f"  • {item}" for item in items[:limit]]
+        source = items if limit is None else items[:limit]
+        return [f"  • {item}" for item in source]
 
     def _format_history_ansi(self, width: int) -> list[str]:
         if not self.history:
-            return ["  " + self._colorize("暂无", self._dim_gray())]
+            return ["  " + self._colorize("- 暂无", self._dim_gray())]
         lines: list[str] = []
-        for level, message in self.history[-6:]:
+        for level, message in self.history[-self.HISTORY_VISIBLE_ROWS :]:
             color = self.YELLOW if level == "WARN" else self.RED
             prefix = "[!]" if level == "WARN" else "[×]"
             lines.append(f"  {self._colorize(prefix, color)} {_fit(message, width - 6)}")
@@ -522,7 +538,7 @@ class ExportProgressUI:
 
     def _plain_history_lines(self, width: int) -> list[str]:
         if not self.history:
-            return ["  暂无"]
+            return ["  - 暂无"]
         lines: list[str] = []
         for level, message in self.history:
             prefix = "[!]" if level == "WARN" else "[x]"
@@ -530,13 +546,8 @@ class ExportProgressUI:
         return lines
 
     def _slice_history_lines(self, lines: list[str], visible_rows: int) -> tuple[list[str], str]:
-        if not lines:
-            return ["  暂无"], "警告 0/0"
-        max_scroll = max(0, len(lines) - visible_rows)
-        self.history_scroll = min(self.history_scroll, max_scroll)
-        start = self.history_scroll
-        end = min(len(lines), start + visible_rows)
-        return lines[start:end], f"警告 {start + 1}-{end}/{len(lines)}"
+        visible, label = self._slice_section_lines("history", lines, visible_rows)
+        return visible, f"警告 {label}"
 
     def _build_footer_lines(self, snapshot: ProgressSnapshot) -> list[tuple[str, int]]:
         lines: list[tuple[str, int]] = []
@@ -553,8 +564,32 @@ class ExportProgressUI:
         return self._colorize(" 返回 ", self.BOLD, self.CYAN)
 
     def _clamp_history_scroll(self) -> None:
-        max_scroll = max(0, len(self.history) - 1)
-        self.history_scroll = max(0, min(self.history_scroll, max_scroll))
+        self.section_scrolls["history"] = max(0, self.section_scrolls.get("history", 0))
+        self.history_scroll = self.section_scrolls["history"]
+
+    def _scroll_active_section(self, delta: int) -> None:
+        section_key = ["recent_completed", "recent_failed", "waiting_preview", "history"][self.section_focus]
+        self.section_scrolls[section_key] = max(0, self.section_scrolls.get(section_key, 0) + delta)
+        if section_key == "history":
+            self.history_scroll = self.section_scrolls[section_key]
+
+    def _slice_section_lines(self, section_key: str, lines: list[str], visible_rows: int) -> tuple[list[str], str]:
+        if not lines:
+            return [f"  - 暂无"] + [""] * max(0, visible_rows - 1), "0/0"
+        if section_key == "history":
+            self.section_scrolls["history"] = self.history_scroll
+        max_scroll = max(0, len(lines) - visible_rows)
+        current_scroll = min(self.section_scrolls.get(section_key, 0), max_scroll)
+        self.section_scrolls[section_key] = current_scroll
+        if section_key == "history":
+            self.history_scroll = current_scroll
+        start = current_scroll
+        end = min(len(lines), start + visible_rows)
+        visible = list(lines[start:end])
+        if len(visible) < visible_rows:
+            visible.extend([""] * (visible_rows - len(visible)))
+        label_end = min(start + visible_rows, len(lines))
+        return visible, f"{start + 1}-{label_end}/{len(lines)}"
 
     def _section_header(self, text: str) -> str:
         return self._colorize(f"── {text} ──", self.BOLD, self.CYAN)

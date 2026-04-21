@@ -43,3 +43,7 @@ class YuqueNetworkError(YuqueRetryableError):
 
 class ExportError(YuqueError):
     """导出流程异常。"""
+
+
+class ExportCancelledError(ExportError):
+    """用户主动中止导出。"""

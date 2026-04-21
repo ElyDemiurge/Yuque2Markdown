@@ -9,6 +9,7 @@ from unittest.mock import MagicMock
 from core_modules.lake.localizer import (
     _url_variants,
     _replace_url_multi,
+    is_critical_resource_failure,
     localize_markdown_assets,
     rewrite_doc_links,
     build_asset_name,
@@ -133,6 +134,30 @@ def test_localize_assets_warns_on_failure():
 
     assert any("下载失败" in w for w in result.warnings)
     assert result.resources[0].failed is True
+
+
+def test_external_asset_failure_is_not_critical():
+    resource = ResourceRef(
+        original_url="https://upload-images.jianshu.io/upload_images/demo.png",
+        normalized_url="https://upload-images.jianshu.io/upload_images/demo.png",
+        kind="image",
+        source_format="lake",
+        failed=True,
+    )
+
+    assert is_critical_resource_failure(resource) is False
+
+
+def test_yuque_asset_failure_is_critical():
+    resource = ResourceRef(
+        original_url="https://cdn.nlark.com/yuque/0/2020/png/demo.png",
+        normalized_url="https://cdn.nlark.com/yuque/0/2020/png/demo.png",
+        kind="image",
+        source_format="lake",
+        failed=True,
+    )
+
+    assert is_critical_resource_failure(resource) is True
 
 
 def test_localize_assets_preserves_non_asset_resources():

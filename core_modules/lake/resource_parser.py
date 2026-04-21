@@ -10,7 +10,7 @@ from core_modules.lake.models import ResourceRef
 _MARKDOWN_IMAGE_PATTERN = re.compile(r'!\[(?P<alt>[^\]]*)\]\((?P<url>[^)\s]+)(?:\s+"(?P<title>[^"]*)")?\)')
 _MARKDOWN_LINK_PATTERN = re.compile(r'(?<!!)\[(?P<text>[^\]]+)\]\((?P<url>[^)\s]+)(?:\s+"(?P<title>[^"]*)")?\)')
 _HTML_ATTR_PATTERN = re.compile(r'(?P<attr>src|href)\s*=\s*["\'](?P<url>[^"\']+)["\']', re.I)
-_URL_PATTERN = re.compile(r'https?://[^\s)"\']+')
+_URL_PATTERN = re.compile(r'https?://[^\s)"\'，。：；、！？〉》）】]+')
 _FENCED_CODE_PATTERN = re.compile(r"```[\s\S]*?```")
 _INLINE_CODE_PATTERN = re.compile(r"`[^`\n]+`")
 # 匹配语雀文档 URL，支持 query string 和 hash 片段
@@ -27,15 +27,23 @@ def normalize_resource_url(url: str, base_url: str | None = None) -> str:
         return raw
     if raw.startswith("//"):
         return f"https:{raw}"
-    if base_url and not urlparse(raw).scheme and raw.startswith("/"):
+    parsed = _safe_urlparse(raw)
+    if base_url and parsed is not None and not parsed.scheme and raw.startswith("/"):
         return urljoin(base_url, raw)
     return raw
 
 
 def is_remote_url(url: str) -> bool:
     """判断是否为远程 HTTP/HTTPS URL。"""
-    parsed = urlparse(url)
-    return parsed.scheme in {"http", "https"}
+    parsed = _safe_urlparse(url)
+    if parsed is None:
+        return False
+    if parsed.scheme not in {"http", "https"}:
+        return False
+    host = (parsed.hostname or "").strip()
+    if not host:
+        return False
+    return "." in host or host == "localhost"
 
 
 def collect_resources(markdown: str, source_format: str, base_url: str | None = None) -> list[ResourceRef]:
@@ -141,7 +149,10 @@ def extract_yuque_doc_slug(url: str) -> str | None:
 
 def is_image_url(url: str) -> bool:
     """根据 URL 路径判断是否为图片。"""
-    path = urlparse(url.strip()).path.lower()
+    parsed = _safe_urlparse(url.strip())
+    if parsed is None:
+        return False
+    path = parsed.path.lower()
     return any(path.endswith(ext) for ext in _IMAGE_EXTENSIONS)
 
 
@@ -154,7 +165,9 @@ def is_attachment_url(url: str) -> bool:
 
     这里的职责只是“识别附件链接”，并不代表当前版本一定会将其下载到本地。
     """
-    parsed = urlparse(url.strip())
+    parsed = _safe_urlparse(url.strip())
+    if parsed is None:
+        return False
     host = parsed.netloc.lower()
     path = parsed.path.lower()
 
@@ -172,3 +185,10 @@ def is_attachment_url(url: str) -> bool:
             return True
 
     return False
+
+
+def _safe_urlparse(url: str):
+    try:
+        return urlparse(url)
+    except ValueError:
+        return None

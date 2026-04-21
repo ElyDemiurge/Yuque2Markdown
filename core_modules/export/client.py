@@ -4,6 +4,7 @@ import http.client
 import json
 import socket
 import ssl
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -14,6 +15,7 @@ from typing import Any
 from core_modules.export.errors import (
     YuqueApiError,
     YuqueAuthError,
+    ExportCancelledError,
     YuqueNetworkError,
     YuqueNotFoundError,
     YuquePermissionError,
@@ -74,6 +76,7 @@ class YuqueClient:
         self._web_book_cache: dict[tuple[str, str], dict[str, Any]] = {}
         self._debug_logger = None
         self._opener = self._build_opener()
+        self._cancel_event: threading.Event | None = None
 
     def _build_opener(self):
         """构建 urllib opener，支持代理。
@@ -155,6 +158,22 @@ class YuqueClient:
             return {"Cookie": self.cookie}
         return {"X-Auth-Token": self.token}
 
+    def set_cancel_event(self, cancel_event: threading.Event | None) -> None:
+        self._cancel_event = cancel_event
+
+    def _check_cancel(self) -> None:
+        if self._cancel_event is not None and self._cancel_event.is_set():
+            raise ExportCancelledError("用户中止导出")
+
+    def _sleep_with_cancel(self, seconds: float) -> None:
+        deadline = time.monotonic() + max(0.0, seconds)
+        while True:
+            self._check_cancel()
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return
+            time.sleep(min(0.1, remaining))
+
     def web_request(self, method: str, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         """向语雀网页端 API 发起请求，供 Cookie 登录使用。"""
         url = f"{WEB_BASE_URL}{path}"
@@ -172,8 +191,9 @@ class YuqueClient:
             },
         )
         for attempt in range(self.max_retries):
+            self._check_cancel()
             if self.request_interval > 0:
-                time.sleep(self.request_interval)
+                self._sleep_with_cancel(self.request_interval)
             try:
                 with self._opener.open(request, timeout=self.timeout) as response:
                     self._update_rate_limit(response.headers)
@@ -189,7 +209,7 @@ class YuqueClient:
                 retry_after = self._parse_retry_after(exc.headers.get("Retry-After"))
                 if exc.code == 429 and attempt < self.max_retries - 1:
                     backoff = retry_after or min(self.max_backoff_seconds, self.rate_limit_backoff_seconds * (2 ** attempt))
-                    time.sleep(backoff)
+                    self._sleep_with_cancel(backoff)
                     continue
                 self._raise_http_error(exc.code, payload, retry_after=retry_after)
             except RETRYABLE_TRANSPORT_ERRORS as exc:
@@ -216,8 +236,9 @@ class YuqueClient:
         )
 
         for attempt in range(self.max_retries):
+            self._check_cancel()
             if self.request_interval > 0:
-                time.sleep(self.request_interval)
+                self._sleep_with_cancel(self.request_interval)
             try:
                 with self._opener.open(request, timeout=self.timeout) as response:
                     self._update_rate_limit(response.headers)
@@ -233,7 +254,7 @@ class YuqueClient:
                 retry_after = self._parse_retry_after(exc.headers.get("Retry-After"))
                 if exc.code == 429 and attempt < self.max_retries - 1:
                     backoff = retry_after or min(self.max_backoff_seconds, self.rate_limit_backoff_seconds * (2 ** attempt))
-                    time.sleep(backoff)
+                    self._sleep_with_cancel(backoff)
                     continue
                 self._raise_http_error(exc.code, payload, retry_after=retry_after)
             except RETRYABLE_TRANSPORT_ERRORS as exc:
@@ -256,8 +277,9 @@ class YuqueClient:
             },
         )
         for attempt in range(self.max_retries):
+            self._check_cancel()
             if self.request_interval > 0:
-                time.sleep(self.request_interval)
+                self._sleep_with_cancel(self.request_interval)
             self._debug(f"资源请求开始 [{attempt + 1}/{self.max_retries}] {binary_url}")
             try:
                 with self._opener.open(request, timeout=self.timeout) as response:
@@ -279,7 +301,7 @@ class YuqueClient:
                     self._debug(
                         f"资源请求限流，准备重试 [{attempt + 2}/{self.max_retries}] {binary_url} | 等待 {backoff:.1f}s"
                     )
-                    time.sleep(backoff)
+                    self._sleep_with_cancel(backoff)
                     continue
                 self._raise_http_error(exc.code, payload, retry_after=retry_after)
             except RETRYABLE_TRANSPORT_ERRORS as exc:
@@ -296,7 +318,7 @@ class YuqueClient:
         if attempt >= self.max_retries - 1:
             return False
         self._opener = self._build_opener()
-        time.sleep(min(self.max_backoff_seconds, self.network_backoff_seconds * (2 ** attempt)))
+        self._sleep_with_cancel(min(self.max_backoff_seconds, self.network_backoff_seconds * (2 ** attempt)))
         return True
 
     def _debug(self, message: str) -> None:
@@ -385,6 +407,7 @@ class YuqueClient:
         docs: list[dict[str, Any]] = []
         offset = 0
         while True:
+            self._check_cancel()
             payload = self.get_repo_docs_page(group_login, book_slug, limit=limit, offset=offset)
             page_items = extract_data_list(payload)
             docs.extend(page_items)

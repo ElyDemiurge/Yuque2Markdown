@@ -7,7 +7,7 @@ from typing import Callable
 
 from core_modules.export.checkpoint import create_checkpoint, load_checkpoint, save_checkpoint
 from core_modules.export.client import YuqueClient
-from core_modules.export.errors import ExportError, YuquePermissionError, YuqueRateLimitError
+from core_modules.export.errors import ExportCancelledError, ExportError, YuquePermissionError, YuqueRateLimitError
 from core_modules.export.file_naming import sanitize_name, unique_name
 from core_modules.export.logger import ExportLogger
 from core_modules.export.models import (
@@ -23,7 +23,7 @@ from core_modules.export.models import (
 from core_modules.export.toc_builder import build_toc_tree
 from core_modules.export.writer import ensure_dir, write_json_file, write_text_file
 from core_modules.lake.converter import render_doc_markdown
-from core_modules.lake.localizer import localize_markdown_assets
+from core_modules.lake.localizer import is_critical_resource_failure, localize_markdown_assets
 
 
 def build_doc_markdown_result(
@@ -66,6 +66,7 @@ class Exporter:
     def export_repo(self, repo: RepoRef, options: ExportOptions) -> ExportResult:
         """导出整个知识库，并汇总导出结果。"""
         overall_start = time.monotonic()
+        self._check_cancel()
 
         repo_payload = self.client.get_repo_detail(repo.group_login, repo.book_slug)
         repo_data = repo_payload.get("data", {})
@@ -109,7 +110,9 @@ class Exporter:
             waiting_docs=total_docs,
             latest_event=f"开始导出知识库 {repo.name or repo.book_slug}",
             waiting_preview=queue[:5],
-            details={"log_path": str(log_path)},
+            recent_completed=[],
+            recent_failed=[],
+            details={"log_path": str(log_path), "_waiting_titles": list(queue)},
         )
         log.export_started(repo.name or repo.book_slug, str(repo_dir), total_docs)
         if selection_warning:
@@ -134,6 +137,9 @@ class Exporter:
                 progress=progress,
                 log=log,
             )
+        except ExportCancelledError:
+            log.warning("导出已中止")
+            raise
         except Exception as exc:
             log.export_failed(str(exc))
             raise
@@ -186,6 +192,7 @@ class Exporter:
         """递归遍历目录树并导出文档节点。"""
         name_pool = used_names.setdefault(current_dir, set())
         for node in nodes:
+            self._check_cancel()
             if options.max_docs is not None and result.exported_docs >= options.max_docs:
                 return
             safe_name = unique_name(sanitize_name(node.title), name_pool, suffix=str(node.doc_id) if node.doc_id else None)
@@ -214,7 +221,7 @@ class Exporter:
                 continue
             if doc_id and doc_id in checkpoint.completed_doc_ids:
                 result.skipped_docs += 1
-                waiting_preview = self._advance_waiting_preview(progress.waiting_preview, node.title)
+                waiting_preview = self._advance_waiting_preview(progress, node.title)
                 recent_completed = self._push_recent(progress.recent_completed, f"跳过 {node.title}")
                 self._emit_progress(
                     progress,
@@ -260,7 +267,7 @@ class Exporter:
                 result.failed_docs += 1
                 result.failed_items.append(f"{node.title}: {exc}")
                 recent_failed = self._push_recent(progress.recent_failed, f"{node.title}: {exc}")
-                waiting_preview = self._advance_waiting_preview(progress.waiting_preview, node.title)
+                waiting_preview = self._advance_waiting_preview(progress, node.title)
                 self._emit_progress(
                     progress,
                     processed_docs=progress.processed_docs + 1,
@@ -285,7 +292,7 @@ class Exporter:
                 result.failed_docs += 1
                 result.failed_items.append(f"{node.title}: {exc}")
                 recent_failed = self._push_recent(progress.recent_failed, f"{node.title}: {exc}")
-                waiting_preview = self._advance_waiting_preview(progress.waiting_preview, node.title)
+                waiting_preview = self._advance_waiting_preview(progress, node.title)
                 self._emit_progress(
                     progress,
                     processed_docs=progress.processed_docs + 1,
@@ -320,6 +327,7 @@ class Exporter:
     ) -> None:
         """导出单篇文档及其相关资源。"""
         doc_start = time.monotonic()
+        self._check_cancel()
 
         doc_id = node.doc_id
         doc_meta = docs_by_id.get(doc_id) if doc_id else None
@@ -346,6 +354,7 @@ class Exporter:
         state.assets_dir = str(output_paths.assets_dir)
 
         doc_payload = self.client.get_doc_detail(repo.group_login, repo.book_slug, str(doc_identifier))
+        self._check_cancel()
 
         if output_paths.raw_json_path:
             write_json_file(output_paths.raw_json_path, doc_payload)
@@ -365,6 +374,7 @@ class Exporter:
             current_doc_elapsed_ms=int((time.monotonic() - doc_start) * 1000),
         )
         render_result = render_doc_markdown(doc_data)
+        self._check_cancel()
         state.warnings = list(render_result.warnings)
         state.warning_count = len(render_result.warnings)
 
@@ -420,6 +430,7 @@ class Exporter:
                 fetch_binary=self.client.fetch_binary,
                 doc_slug_map=checkpoint.doc_slug_map,
             )
+            self._check_cancel()
             rewritten_count = final_result.rewritten_links
             result.rewritten_links += rewritten_count
             download_count = sum(
@@ -470,8 +481,11 @@ class Exporter:
                 new_warnings=[],
             )
             state.stage = "assets_localized"
-            if options.fail_on_asset_error and state.failed_resource_urls:
-                raise ExportError(f"资源下载失败: {len(state.failed_resource_urls)} 个")
+            critical_failures = [
+                resource for resource in final_result.resources if resource.failed and is_critical_resource_failure(resource)
+            ]
+            if options.fail_on_asset_error and critical_failures:
+                raise ExportError(f"资源下载失败: {len(critical_failures)} 个")
         else:
             state.stage = "markdown_written"
             save_checkpoint(repo_dir, checkpoint)
@@ -489,7 +503,7 @@ class Exporter:
         result.written_files.append(output_paths.markdown_path)
         save_checkpoint(repo_dir, checkpoint)
         recent_completed = self._push_recent(progress.recent_completed, node.title)
-        waiting_preview = self._advance_waiting_preview(progress.waiting_preview, node.title)
+        waiting_preview = self._advance_waiting_preview(progress, node.title)
         self._emit_progress(
             progress,
             processed_docs=progress.processed_docs + 1,
@@ -507,6 +521,10 @@ class Exporter:
         log.doc_completed(node.title, state.warning_count)
         if hasattr(self.client, "set_debug_logger"):
             self.client.set_debug_logger(None)
+
+    def _check_cancel(self) -> None:
+        if hasattr(self.client, "_check_cancel"):
+            self.client._check_cancel()
 
     def _build_doc_output_paths(self, current_dir: Path, safe_name: str, options: ExportOptions) -> DocOutputPaths:
         doc_dir = current_dir / safe_name
@@ -568,10 +586,21 @@ class Exporter:
             return titles[: options.max_docs]
         return titles
 
-    def _advance_waiting_preview(self, waiting_preview: list[str], current_title: str) -> list[str]:
-        return [title for title in waiting_preview if title != current_title][:5]
+    def _advance_waiting_preview(self, progress: ProgressSnapshot, current_title: str) -> list[str]:
+        waiting_titles = progress.details.get("_waiting_titles", [])
+        if isinstance(waiting_titles, list):
+            try:
+                waiting_titles.remove(current_title)
+            except ValueError:
+                pass
+            return waiting_titles[:5]
+        return [title for title in progress.waiting_preview if title != current_title][:5]
 
-    def _push_recent(self, items: list[str], value: str, limit: int = 5) -> list[str]:
+    def _push_recent(self, items: list[str], value: str, limit: int | None = None) -> list[str]:
+        if limit is None:
+            queue = deque(items)
+            queue.append(value)
+            return list(queue)
         queue = deque(items, maxlen=limit)
         queue.append(value)
         return list(queue)

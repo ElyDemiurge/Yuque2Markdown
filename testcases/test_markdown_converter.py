@@ -415,6 +415,14 @@ def test_collect_resources_ignores_urls_in_fenced_code_block():
     assert resources == []
 
 
+def test_collect_resources_ignores_malformed_url_with_chinese_punctuation():
+    markdown = "在浏览器中访问http://burp，结果如下："
+
+    resources = collect_resources(markdown, "lake")
+
+    assert resources == []
+
+
 def test_lake_strips_invalid_xml_control_chars():
     """lake 中混入的 XML 非法控制字符不应导致整个文档解析失败。"""
     body_lake = "<p>sym\x02bolic execution</p>"

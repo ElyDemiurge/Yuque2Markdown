@@ -14,7 +14,7 @@ def test_sanitize_normal():
 
 def test_sanitize_removes_invalid_chars():
     assert sanitize_name('file<name>') == "file_name_"
-    assert sanitize_name("path/to/file") == "file"
+    assert sanitize_name("path/to/file") == "path_to_file"
     assert sanitize_name('file*name?test') == "file_name_test"
 
 
@@ -52,7 +52,12 @@ def test_sanitize_long_name():
 
 
 def test_sanitize_mixed():
-    assert sanitize_name("  foo//bar<test>..md  ") == "bar_test_..md"
+    assert sanitize_name("  foo//bar<test>..md  ") == "foo__bar_test_..md"
+
+
+def test_sanitize_preserves_slash_meaning_in_normal_title():
+    raw = "PWN入门（1-3-6-4）-基本ROP-ret2libc实战3（无system函数，无/bin/sh）"
+    assert sanitize_name(raw) == "PWN入门（1-3-6-4）-基本ROP-ret2libc实战3（无system函数，无_bin_sh）"
 
 
 # ── unique_name tests ─────────────────────────────────────────

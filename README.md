@@ -2,7 +2,7 @@
 
 通过语雀 API Token 或浏览器 Cookie 将个人语雀知识库导出为本地 Markdown 的交互式命令行工具。
 
-当前版本：`v0.4`
+当前版本：`v0.4`（暂时仅支持 macOS）
 
 ## 作者
 
@@ -99,8 +99,12 @@ Cookie 登录可用于下载语雀附件。Cookie 属于敏感凭据，请不要
 
 ## 项目入口
 
-- `yuque2markdown.py`：程序主入口，负责启动检查并进入交互式控制台
+- `yuque2markdown.py`：程序主入口，执行启动检查并进入交互式控制台
+- `core_modules/auth/`：登录凭据处理，当前主要用于读取浏览器 Cookie
 - `core_modules/console/`：终端菜单、状态展示和交互逻辑
+  - `menu_unix.py`：当前版本实际使用的 macOS 菜单实现
+  - `menu_windows.py`：Windows 菜单待实现占位，当前版本不会启用
+  - `selector.py`：文档树选择器
 - `core_modules/export/`：API 调用、导出流程、日志、断点恢复、文件写入
 - `core_modules/lake/`：Lake 转 Markdown、资源提取与链接改写
 - `testcases/`：pytest 测试目录
