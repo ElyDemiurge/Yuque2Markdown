@@ -238,11 +238,16 @@ class Exporter:
                 log.doc_skipped(node.title)
                 continue
 
+            waiting_preview = self._advance_waiting_preview(progress, node.title)
             self._emit_progress(
                 progress,
                 current_doc_title=node.title,
                 current_stage="准备导出文档",
-                active_tasks=[f"读取文档详情: {node.title}", f"等待后续: {', '.join(progress.waiting_preview[:2])}" if progress.waiting_preview[:2] else "等待后续: -"],
+                waiting_preview=waiting_preview,
+                active_tasks=[
+                    f"读取文档详情: {node.title}",
+                    f"等待后续: {', '.join(waiting_preview[:2])}" if waiting_preview[:2] else "等待后续: -",
+                ],
                 latest_event=f"开始处理 {node.title}",
             )
             try:

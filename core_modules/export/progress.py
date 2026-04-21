@@ -574,8 +574,8 @@ class ExportProgressUI:
             self.history_scroll = self.section_scrolls[section_key]
 
     def _slice_section_lines(self, section_key: str, lines: list[str], visible_rows: int) -> tuple[list[str], str]:
-        if not lines:
-            return [f"  - 暂无"] + [""] * max(0, visible_rows - 1), "0/0"
+        if not lines or lines == ["  - 暂无"]:
+            return [f"  - 暂无"] + [""] * max(0, visible_rows - 1), "0-0/0"
         if section_key == "history":
             self.section_scrolls["history"] = self.history_scroll
         max_scroll = max(0, len(lines) - visible_rows)

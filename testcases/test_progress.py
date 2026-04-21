@@ -105,6 +105,13 @@ def test_progress_ui_keeps_full_history_when_unbounded():
     assert label == "警告 6-8/8"
 
 
+def test_progress_ui_empty_section_uses_zero_range_label():
+    ui = ExportProgressUI(stream=DummyStream())
+    visible, label = ui._slice_section_lines("waiting_preview", ["  - 暂无"], 3)
+    assert visible == ["  - 暂无", "", ""]
+    assert label == "0-0/0"
+
+
 def test_stage_color():
     ui = ExportProgressUI(stream=DummyStream())
     assert ui._stage_color("已完成") == ui.GREEN

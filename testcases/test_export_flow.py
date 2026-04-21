@@ -119,6 +119,36 @@ def test_export_repo_reports_progress_events(tmp_path: Path) -> None:
     assert snapshots[0].details["log_path"].endswith("export.log")
 
 
+def test_export_repo_removes_current_doc_from_waiting_queue_when_processing_starts(tmp_path: Path) -> None:
+    snapshots: list[dict[str, object]] = []
+
+    def on_progress(snapshot: ProgressSnapshot) -> None:
+        waiting_titles = snapshot.details.get("_waiting_titles")
+        snapshots.append(
+            {
+                "current_doc_title": snapshot.current_doc_title,
+                "current_stage": snapshot.current_stage,
+                "waiting_preview": list(snapshot.waiting_preview),
+                "waiting_titles": list(waiting_titles) if isinstance(waiting_titles, list) else None,
+            }
+        )
+
+    exporter = Exporter(FakeClient(), progress_callback=on_progress)
+    repo = RepoRef(group_login="cyberangel", book_slug="rg9gdm")
+    options = ExportOptions(repo_input="cyberangel/rg9gdm", output_dir=tmp_path, request_interval=0)
+
+    result = exporter.export_repo(repo, options)
+
+    assert result.exported_docs == 2
+    processing_snapshot = next(
+        snapshot
+        for snapshot in snapshots
+        if snapshot["current_stage"] == "准备导出文档" and snapshot["current_doc_title"] == "文档1"
+    )
+    assert processing_snapshot["waiting_preview"] == ["文档2"]
+    assert processing_snapshot["waiting_titles"] == ["文档2"]
+
+
 class AttachmentWarningClient(FakeClient):
     def get_all_repo_docs(self, group_login: str, book_slug: str):
         return [{"id": 21, "slug": "doc-attachment", "title": "附件文档"}]
