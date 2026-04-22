@@ -478,6 +478,14 @@ def test_lake_bookmarkinline_card():
     assert not any("未支持 card 类型" in w and "bookmarkinline" in w for w in result.warnings)
 
 
+def test_lake_label_card():
+    """label card 应渲染为纯文本标签。"""
+    body_lake = '<ul><li><card type="inline" name="label" value="data:%7B%22label%22%3A%22%E6%AF%8F%E5%A4%A9%22%7D"></card><span> 保持上午刷题</span></li></ul>'
+    result = render_doc_markdown({"title": "测试", "format": "lake", "body_lake": body_lake})
+    assert "- 【每天】 保持上午刷题" in result.markdown
+    assert not any("未支持 card 类型" in w and "label" in w for w in result.warnings)
+
+
 def test_lake_lockedtext_card():
     """lockedtext card 是加密内容，应静默跳过"""
     body_lake = '<card type="inline" name="lockedtext" value="data:encrypted"/>'

@@ -52,6 +52,8 @@ python -m pytest
   覆盖控制台主流程中的纯函数与状态拼装逻辑。
 - `test_console_menu.py`
   覆盖菜单项渲染、确认框和交互相关行为。
+- `test_repo_handler.py`
+  覆盖知识库输入、知识库列表选择和文档选择相关处理逻辑。
 
 ### 导出流程与文件处理
 
@@ -78,7 +80,7 @@ python -m pytest
 - `test_resolver.py`
   覆盖知识库输入解析和仓库定位逻辑。
 - `test_selector.py`
-  覆盖文档树选择器行为。
+  覆盖文档树选择器行为，包括过滤实时刷新、目录命中后自动展开，以及折叠目录中的命中文档显示。
 - `test_toc_builder.py`
   覆盖语雀 TOC 转本地树结构的构建逻辑。
 
@@ -100,7 +102,7 @@ python -m pytest
 - `core_modules/config/validator.py`
   运行 `testcases/test_config_validator.py`
 - `core_modules/console/`
-  运行 `testcases/test_console_app.py`、`testcases/test_console_menu.py`
+  运行 `testcases/test_console_app.py`、`testcases/test_console_menu.py`、`testcases/test_repo_handler.py`、`testcases/test_selector.py`
 - `core_modules/export/progress.py`
   运行 `testcases/test_progress.py`
 

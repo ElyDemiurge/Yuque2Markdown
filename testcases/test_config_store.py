@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from core_modules.config.models import AppConfig, build_export_options
-from core_modules.config.store import CONFIG_FILE_NAME, config_path, load_config, save_config
+from core_modules.config.store import CONFIG_FILE_NAME, DEFAULT_COOKIE_PLACEHOLDER, config_path, load_config, save_config
 
 
 def test_config_store_round_trip(tmp_path: Path) -> None:
@@ -159,3 +159,23 @@ def test_config_store_defaults_to_persist_cookie_for_legacy_config(tmp_path: Pat
     loaded = load_config(tmp_path)
 
     assert loaded.persist_cookie is True
+
+
+def test_config_store_writes_cookie_placeholder_when_creating_default_file(tmp_path: Path) -> None:
+    config = AppConfig()
+
+    save_config(config, tmp_path)
+
+    raw = (tmp_path / CONFIG_FILE_NAME).read_text(encoding="utf-8")
+    assert f'"cookie": "{DEFAULT_COOKIE_PLACEHOLDER}"' in raw
+
+
+def test_config_store_does_not_overwrite_empty_cookie_in_existing_file(tmp_path: Path) -> None:
+    config = AppConfig()
+    existing = tmp_path / CONFIG_FILE_NAME
+    existing.write_text("{}", encoding="utf-8")
+
+    save_config(config, tmp_path)
+
+    raw = existing.read_text(encoding="utf-8")
+    assert '"cookie": ""' in raw

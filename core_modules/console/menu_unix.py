@@ -1,3 +1,9 @@
+"""Unix/macOS 终端菜单渲染与输入处理。
+
+本模块基于 curses 实现主菜单、输入框、选择列表和消息弹窗，是 console 交互的 Unix
+后端实现。
+"""
+
 from __future__ import annotations
 
 import curses
@@ -51,6 +57,7 @@ class MenuRefreshState:
 
 
 def _layout_frame(height: int, width: int, help_text: list[str], item_count: int, transient_lines: list[str] | None, status_lines: list[str]) -> tuple[int, int, int, int]:
+    """计算当前菜单框架布局。"""
     content_width = min(width - 1, max(60, min(128, width - 4)))
     left = max(0, (width - content_width) // 2)
     transient_height = len(transient_lines) + 1 if transient_lines else 0
@@ -63,6 +70,7 @@ def _layout_frame(height: int, width: int, help_text: list[str], item_count: int
 
 
 def _screen_too_small_message(height: int, width: int) -> list[str]:
+    """生成窗口过小时的提示文案。"""
     missing_width = max(0, MIN_SCREEN_WIDTH - width)
     missing_height = max(0, MIN_SCREEN_HEIGHT - height)
     if missing_width > 0 and missing_height > 0:
@@ -81,6 +89,7 @@ def _screen_too_small_message(height: int, width: int) -> list[str]:
 
 
 def _render_screen_too_small(stdscr, *, title: str, height: int, width: int) -> None:
+    """渲染窗口尺寸不足提示页。"""
     stdscr.clear()
     help_text = ["窗口大小不足，调整后会自动刷新"]
     content_width = max(20, min(width - 2, 60))
@@ -96,10 +105,12 @@ def _render_screen_too_small(stdscr, *, title: str, height: int, width: int) -> 
 
 
 def _is_screen_too_small(height: int, width: int) -> bool:
+    """判断窗口是否小于菜单最低要求。"""
     return width < MIN_SCREEN_WIDTH or height < MIN_SCREEN_HEIGHT
 
 
 def _draw_text(stdscr, row: int, col: int, text: str, *, width: int | None = None, attrs: int = 0) -> None:
+    """安全地向指定位置输出文本。"""
     if row < 0 or col < 0:
         return
     try:
@@ -121,10 +132,12 @@ def _draw_text(stdscr, row: int, col: int, text: str, *, width: int | None = Non
 
 
 def _char_display_width(char: str) -> int:
+    """返回单个字符在终端中的显示宽度。"""
     return 2 if unicodedata.east_asian_width(char) in {"W", "F"} else 1
 
 
 def _coerce_printable_key(key) -> str | None:
+    """把 getch/get_wch 返回值统一转换为可打印字符。"""
     if isinstance(key, str):
         return key if key.isprintable() else None
     if isinstance(key, int) and 0 <= key <= 0x10FFFF:
@@ -139,6 +152,7 @@ def _coerce_printable_key(key) -> str | None:
 
 
 def _start_filter_buffer(current_filter: str, seed_key=None) -> tuple[list[str], int]:
+    """初始化过滤输入缓冲区。"""
     chars = list(current_filter)
     char = _coerce_printable_key(seed_key)
     if char is not None:
@@ -147,16 +161,23 @@ def _start_filter_buffer(current_filter: str, seed_key=None) -> tuple[list[str],
 
 
 def _cursor_display_offset(chars: list[str], cursor_pos: int) -> int:
+    """计算光标在混合宽字符文本中的显示偏移。"""
     safe_pos = max(0, min(cursor_pos, len(chars)))
     return _display_width("".join(chars[:safe_pos]))
 
 
 def _filter_cursor_x(left: int, content_width: int, chars: list[str], cursor_pos: int) -> int:
+    """计算过滤输入光标的屏幕横坐标。"""
     prompt_width = _display_width("过滤: ")
     return min(left + prompt_width + _cursor_display_offset(chars, cursor_pos), max(left, left + content_width - 1))
 
 
 def _apply_text_edit_key(key, chars: list[str], cursor_pos: int) -> tuple[list[str], int, bool]:
+    """处理文本编辑按键。
+
+    返回:
+        ``(字符列表, 新光标位置, 是否已处理)``。
+    """
     if key in (curses.KEY_BACKSPACE, "\b", "\x7f"):
         if cursor_pos > 0:
             del chars[cursor_pos - 1]
@@ -178,10 +199,12 @@ def _apply_text_edit_key(key, chars: list[str], cursor_pos: int) -> tuple[list[s
 
 
 def _is_enter_key(key) -> bool:
+    """统一判断 Enter 键。"""
     return key in (10, 13, "\n", "\r", curses.KEY_ENTER)
 
 
 def _is_escape_key(key) -> bool:
+    """统一判断 Esc 键。"""
     return key == 27 or key == "\x1b"
 
 
@@ -189,6 +212,7 @@ _ESCDELAY_CONFIGURED = False
 
 
 def _configure_escape_delay() -> None:
+    """把 Esc 识别延迟调低，减少方向键与 Esc 的混淆等待。"""
     global _ESCDELAY_CONFIGURED
     if _ESCDELAY_CONFIGURED:
         return
@@ -200,6 +224,7 @@ def _configure_escape_delay() -> None:
 
 
 def _enable_keypad(stdscr) -> None:
+    """为 curses 窗口启用 keypad 模式。"""
     _configure_escape_delay()
     try:
         stdscr.keypad(True)
@@ -363,6 +388,7 @@ def _menu_signature(
 
 
 def _menu_help_lines(help_lines: list[str] | None, editing: bool) -> list[str]:
+    """根据当前状态选择帮助文案。"""
     if help_lines is not None:
         return help_lines
     return EDIT_HELP_LINES if editing else DEFAULT_HELP_LINES
@@ -383,6 +409,7 @@ def _render_menu_frame(
     height: int,
     width: int,
 ) -> tuple[int, int]:
+    """渲染菜单主框架并返回编辑光标位置。"""
     content_width, left, top, divider_row = _layout_frame(height, width, help_text, len(items), transient_lines, lines)
     _render_menu_header(stdscr, title=title, help_text=help_text, top=top, width=width, content_width=content_width)
     if divider_row < height:
@@ -415,6 +442,7 @@ def _render_menu_frame(
 
 
 def _render_menu_header(stdscr, *, title: str, help_text: list[str], top: int, width: int, content_width: int) -> None:
+    """渲染菜单标题与帮助行。"""
     _draw_text(
         stdscr,
         top,
@@ -431,6 +459,7 @@ def _render_menu_header(stdscr, *, title: str, help_text: list[str], top: int, w
 
 
 def _render_framed_header(stdscr, *, title: str, help_text: list[str], width: int, content_width: int, top: int, left: int, height: int) -> int:
+    """渲染带分隔线的标题区域，并返回分隔线所在行。"""
     _render_menu_header(stdscr, title=title, help_text=help_text, top=top, width=width, content_width=content_width)
     divider_row = top + len(help_text) + 1
     if divider_row < height:
@@ -439,6 +468,7 @@ def _render_framed_header(stdscr, *, title: str, help_text: list[str], width: in
 
 
 def _render_transient_lines(stdscr, *, transient_lines: list[str] | None, row: int, left: int, content_width: int, height: int) -> int:
+    """渲染瞬时提示行，并返回下一可用行号。"""
     if not transient_lines:
         return row
     for line in transient_lines:
@@ -452,6 +482,7 @@ def _render_transient_lines(stdscr, *, transient_lines: list[str] | None, row: i
 
 
 def _handle_editing_key(*, key, items: list[MenuItem], editing_index: int, edit_chars: list[str], edit_cursor: int, index: int) -> tuple[str | None, int | None, list[str], int, int]:
+    """处理输入框编辑状态下的按键。"""
     if key in ("\n", "\r"):
         result = "".join(edit_chars).strip()
         item_key = items[editing_index].key
@@ -482,6 +513,7 @@ def _handle_editing_key(*, key, items: list[MenuItem], editing_index: int, edit_
 
 
 def _handle_menu_key(*, key, items: list[MenuItem], index: int) -> tuple[str | None, int, int | None, list[str], int]:
+    """处理普通菜单状态下的按键。"""
     if key == curses.KEY_UP:
         return None, _move_focus(items, index, -1), None, [], 0
     if key == curses.KEY_DOWN:
@@ -899,6 +931,7 @@ def run_waiting_message(title: str, lines: list[str], worker) -> object:
 
 
 def _render_menu_items(stdscr, items: list[MenuItem], index: int, start_row: int, left: int, content_width: int, height: int, editing_index: int | None = None, edit_chars: list[str] | None = None, edit_cursor: int = 0) -> tuple[tuple[int, int], int]:
+    """渲染菜单主体内容。"""
     row = start_row
     cursor_pos = (row, left)
     indent_prefix = "    "  # 4 个空格缩进
@@ -907,7 +940,6 @@ def _render_menu_items(stdscr, items: list[MenuItem], index: int, start_row: int
             break
         selected = item_index == index and item.focusable
         is_editing = editing_index == item_index
-        # 根据缩进级别计算前缀
         title_indent = indent_prefix * item.indent
         marker = {
             "bool": "[*]" if item.value.strip() == "开启" else "[ ]",
@@ -1000,6 +1032,7 @@ def _render_input_menu_item(
     edit_chars: list[str] | None,
     edit_cursor: int,
 ) -> tuple[int, int]:
+    """渲染输入型菜单项，并返回光标位置。"""
     dots = "·" * max(2, 18 - min(_display_width(item.title), 16))
     marker_str = marker.strip()
     if marker_str:
@@ -1032,6 +1065,7 @@ def _render_inline_choice_menu_item(
     attrs: int,
     selected: bool,
 ) -> tuple[int, int]:
+    """渲染带行内选项的菜单项。"""
     if item.title:
         label = f"{title_indent}{prefix} {item.title}"
     else:
@@ -1052,6 +1086,7 @@ def _render_inline_choice_menu_item(
 
 
 def _build_basic_menu_label(*, prefix: str, marker: str, title_indent: str, display_title: str, value_text: str, item_type: str) -> str:
+    """构造普通菜单项标签。"""
     marker_str = marker.strip()
     if marker_str:
         label = f"{title_indent}{prefix} {marker} {display_title}"
@@ -1063,10 +1098,12 @@ def _build_basic_menu_label(*, prefix: str, marker: str, title_indent: str, disp
 
 
 def _render_plain_menu_item(stdscr, *, row: int, left: int, content_width: int, label: str, attrs: int) -> None:
+    """渲染普通单行菜单项。"""
     _draw_text(stdscr, row, left, label, width=content_width, attrs=attrs)
 
 
 def _readonly_attrs(title: str, value_text: str, attrs: int) -> int:
+    """根据只读文案内容推断颜色样式。"""
     if "限流" in value_text or "429" in value_text or "限流" in title:
         return _status_attr(curses.COLOR_YELLOW, attrs)
     if "失败" in value_text or "失败" in title:
@@ -1077,6 +1114,7 @@ def _readonly_attrs(title: str, value_text: str, attrs: int) -> int:
 
 
 def _status_attr(color: int, attrs: int) -> int:
+    """构造带颜色的状态样式。"""
     color_attrs = curses.A_BOLD | attrs
     if curses.has_colors():
         try:
@@ -1091,11 +1129,13 @@ def _status_attr(color: int, attrs: int) -> int:
             curses.init_pair(pair_id, color, -1)
             color_attrs |= curses.color_pair(pair_id)
         except curses.error:
+            # 某些终端不支持动态初始化颜色对，退化为无色粗体展示即可。
             pass
     return color_attrs
 
 
 def _render_status_lines(stdscr, status_lines: list[str], content_end: int, left: int, content_width: int, height: int) -> None:
+    """渲染底部状态栏。"""
     if not status_lines:
         return
     _height, width = stdscr.getmaxyx()
@@ -1123,6 +1163,7 @@ def _render_status_lines(stdscr, status_lines: list[str], content_end: int, left
 
 
 def _reserved_status_rows(status_lines: list[str]) -> int:
+    """计算状态栏预留行数。"""
     visible_lines = [line for line in status_lines if line]
     if not visible_lines:
         return 0
@@ -1130,6 +1171,7 @@ def _reserved_status_rows(status_lines: list[str]) -> int:
 
 
 def _status_line_display(line: str) -> tuple[str, int]:
+    """解析状态行颜色前缀并返回文本与样式。"""
     attrs = curses.A_DIM
     text = line
     prefix_map = {
@@ -1147,6 +1189,7 @@ def _status_line_display(line: str) -> tuple[str, int]:
 
 
 def _first_focusable_index(items: list[MenuItem], preferred: int = 0) -> int:
+    """返回首个可聚焦菜单项索引。"""
     if not items:
         return 0
     preferred = max(0, min(preferred, len(items) - 1))

@@ -1,3 +1,8 @@
+"""语雀客户端实现。
+
+本模块封装 OpenAPI 与网页端接口请求、代理支持、重试、限流与资源下载逻辑。
+"""
+
 from __future__ import annotations
 
 import http.client
@@ -56,6 +61,7 @@ class YuqueClient:
         proxy_port: int = 7890,
         proxy_test_url: str = "https://www.baidu.com",
     ) -> None:
+        """初始化语雀客户端。"""
         self.token = token
         self.cookie = cookie.strip()
         self.auth_mode = auth_mode if auth_mode in {"token", "cookie"} else "token"
@@ -154,18 +160,22 @@ class YuqueClient:
         self._debug_logger = callback
 
     def _auth_headers(self) -> dict[str, str]:
+        """根据当前认证方式构造请求头。"""
         if self.auth_mode == "cookie":
             return {"Cookie": self.cookie}
         return {"X-Auth-Token": self.token}
 
     def set_cancel_event(self, cancel_event: threading.Event | None) -> None:
+        """设置导出取消事件。"""
         self._cancel_event = cancel_event
 
     def _check_cancel(self) -> None:
+        """在耗时操作前检查是否已请求取消。"""
         if self._cancel_event is not None and self._cancel_event.is_set():
             raise ExportCancelledError("用户中止导出")
 
     def _sleep_with_cancel(self, seconds: float) -> None:
+        """在可取消前提下等待指定秒数。"""
         deadline = time.monotonic() + max(0.0, seconds)
         while True:
             self._check_cancel()
@@ -339,6 +349,7 @@ class YuqueClient:
         }
 
     def _raise_http_error(self, status: int, payload: dict[str, Any], retry_after: float | None = None) -> None:
+        """把 HTTP 状态码转换为更具体的领域异常。"""
         message = payload.get("message") or payload.get("error") or f"HTTP {status}"
         if status == 401:
             raise YuqueAuthError(message, status=status, payload=payload)
@@ -353,12 +364,18 @@ class YuqueClient:
         raise YuqueApiError(message, status=status, payload=payload)
 
     def _parse_retry_after(self, value: str | None) -> float | None:
+        """解析 ``Retry-After`` 响应头。
+
+        说明:
+            该字段既可能是秒数，也可能是 HTTP 日期，因此这里按两种格式依次解析。
+        """
         if not value:
             return None
         raw = value.strip()
         try:
             return max(0.0, min(self.max_backoff_seconds, float(raw)))
         except ValueError:
+            # 不是纯秒数时，继续按 HTTP 日期格式解析。
             pass
         try:
             retry_at = parsedate_to_datetime(raw)
@@ -370,23 +387,27 @@ class YuqueClient:
         return max(0.0, min(self.max_backoff_seconds, delay))
 
     def get_current_user(self) -> dict[str, Any]:
+        """获取当前登录用户信息。"""
         if self.auth_mode == "cookie":
             return self.web_request("GET", "/mine")
         return self.request("GET", "/user")
 
     def get_repo_detail(self, group_login: str, book_slug: str) -> dict[str, Any]:
+        """获取知识库详情。"""
         if self.auth_mode == "cookie":
             book = self._find_web_book(group_login, book_slug)
             return {"data": book}
         return self.request("GET", f"/repos/{urllib.parse.quote(group_login)}/{urllib.parse.quote(book_slug)}")
 
     def get_repo_toc(self, group_login: str, book_slug: str) -> dict[str, Any]:
+        """获取知识库目录。"""
         if self.auth_mode == "cookie":
             book = self._find_web_book(group_login, book_slug)
             return self.web_request("GET", "/catalog_nodes", {"book_id": book.get("id")})
         return self.request("GET", f"/repos/{urllib.parse.quote(group_login)}/{urllib.parse.quote(book_slug)}/toc")
 
     def get_repo_toc_tree(self, group_login: str, book_slug: str) -> list[dict[str, Any]]:
+        """获取知识库目录树原始数据。"""
         payload = self.get_repo_toc(group_login, book_slug)
         data = payload.get("data", [])
         if isinstance(data, list):
@@ -394,6 +415,7 @@ class YuqueClient:
         return []
 
     def get_repo_docs_page(self, group_login: str, book_slug: str, limit: int = 100, offset: int = 0) -> dict[str, Any]:
+        """按页获取知识库文档列表。"""
         if self.auth_mode == "cookie":
             book = self._find_web_book(group_login, book_slug)
             return self.web_request("GET", "/docs", {"book_id": book.get("id"), "limit": limit, "offset": offset})
@@ -404,6 +426,7 @@ class YuqueClient:
         )
 
     def get_all_repo_docs(self, group_login: str, book_slug: str, limit: int = 100) -> list[dict[str, Any]]:
+        """获取知识库下全部文档元数据。"""
         docs: list[dict[str, Any]] = []
         offset = 0
         while True:
@@ -417,6 +440,7 @@ class YuqueClient:
         return docs
 
     def get_doc_detail(self, group_login: str, book_slug: str, doc_id_or_slug: str) -> dict[str, Any]:
+        """获取单篇文档详情。"""
         if self.auth_mode == "cookie":
             book = self._find_web_book(group_login, book_slug)
             payload = self.web_request("GET", f"/docs/{urllib.parse.quote(str(doc_id_or_slug))}", {"book_id": book.get("id")})
@@ -430,6 +454,7 @@ class YuqueClient:
         )
 
     def get_web_books(self) -> list[dict[str, Any]]:
+        """读取网页端“我的知识库”列表。"""
         payload = self.web_request("GET", "/mine/books")
         books = payload.get("data", [])
         if not isinstance(books, list):
@@ -437,6 +462,7 @@ class YuqueClient:
         return [_normalize_web_book(book) for book in books if isinstance(book, dict)]
 
     def _find_web_book(self, group_login: str, book_slug: str) -> dict[str, Any]:
+        """在网页端知识库列表中定位指定知识库。"""
         key = (group_login, book_slug)
         if key in self._web_book_cache:
             return self._web_book_cache[key]
@@ -450,6 +476,7 @@ class YuqueClient:
 
 
 def extract_data_list(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    """从标准接口响应中提取 ``data`` 列表。"""
     items = payload.get("data", [])
     if isinstance(items, list):
         return items
@@ -457,6 +484,7 @@ def extract_data_list(payload: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _normalize_web_book(book: dict[str, Any]) -> dict[str, Any]:
+    """把网页端知识库对象补齐为更接近 OpenAPI 的结构。"""
     user = book.get("user") or {}
     login = user.get("login") or ""
     slug = book.get("slug") or ""

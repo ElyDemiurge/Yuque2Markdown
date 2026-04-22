@@ -74,7 +74,7 @@ def test_progress_ui_finish_uses_same_section_layout():
     assert "── 已完成 ── 0-0/0" in content
     assert "── 失败 ── 0-0/0" in content
     assert "── 等待队列 ── 0-0/0" in content
-    assert "── 警告/错误 ── 0-0/0" in content
+    assert "── 警告/错误 ── 警告 0 | 错误 0" in content
     assert "[导出结果]" not in content
 
 
@@ -121,11 +121,11 @@ def test_progress_ui_keeps_full_history_when_unbounded():
     lines = ui._plain_history_lines(80)
     visible, label = ui._slice_history_lines(lines, 3)
     assert len(visible) == 3
-    assert label == "警告 8 | 1-3/8"
+    assert label == "警告 8 | 错误 0"
     ui.history_scroll = 5
     visible, label = ui._slice_history_lines(lines, 3)
     assert visible[0].endswith("warning 5")
-    assert label == "警告 8 | 6-8/8"
+    assert label == "警告 8 | 错误 0"
 
 
 def test_progress_ui_empty_section_uses_zero_range_label():
@@ -142,7 +142,7 @@ def test_progress_ui_history_label_shows_warning_and_error_counts():
     lines = ui._plain_history_lines(80)
     visible, label = ui._slice_display_lines("history", lines, 3)
     assert visible[0].endswith("warning 1")
-    assert label == "警告 2 / 错误 1 | 1-3/3"
+    assert label == "警告 2 | 错误 1"
 
 
 def test_progress_ui_empty_history_label_uses_zero_range_only():
@@ -150,7 +150,7 @@ def test_progress_ui_empty_history_label_uses_zero_range_only():
     lines = ui._plain_history_lines(80)
     visible, label = ui._slice_display_lines("history", lines, 3)
     assert visible == ["  - 暂无", "", ""]
-    assert label == "0-0/0"
+    assert label == "警告 0 | 错误 0"
 
 
 def test_progress_ui_finished_focus_can_move_to_return():

@@ -4,6 +4,12 @@
 
 Lake 是语雀编辑器内部使用的文档格式，存在 API 响应的 `body_lake` 字段里。本工具会解析 `body_lake`，再转成 Markdown。
 
+当前文档基于 `v0.4.2` 的实现整理，相关代码主要位于：
+
+- `core_modules/lake/converter.py`
+- `core_modules/lake/resource_parser.py`
+- `core_modules/lake/localizer.py`
+
 转换过程：
 ```
 API 响应 → body_lake (XML) → 解析器 → Markdown
@@ -150,6 +156,23 @@ print('hello')
 
 输出：`---`
 
+#### mention
+
+从节点属性直接读取用户名或展示名。
+
+输出：`@用户名`
+
+#### bookmarklink / bookmarkinline
+
+```json
+{
+  "url": "https://example.com",
+  "title": "示例链接"
+}
+```
+
+输出：`[title](url)` 或 `[url](url)`
+
 #### file
 
 ```json
@@ -186,19 +209,65 @@ print('hello')
 
 输出：`[title](url)` 或 `[url](url)`
 
+#### table
+
+`table` card 会优先读取其中的 HTML 表格，再降级转换为 Markdown 表格。
+
+输出示例：
+
+```markdown
+| 列 1 | 列 2 |
+| --- | --- |
+| 值 A | 值 B |
+```
+
+如果原始 HTML 结构异常，会追加警告 `Lake table card 无法解析` 或 `HTML 表格解析失败`。
+
+#### video
+
+```json
+{
+  "url": "https://example.com/video.mp4",
+  "title": "演示视频"
+}
+```
+
+输出：`[演示视频](url)`；如果缺少 URL，则降级输出 `[视频]`。
+
+#### math
+
+```json
+{
+  "code": "E = mc^2"
+}
+```
+
+输出：
+
+```markdown
+$$
+E = mc^2
+$$
+```
+
+#### board
+
+`board` / `lakeboard` 会优先提取思维导图文本大纲，再保留整图链接。
+
 ### 未支持的 card 类型
 
 以下类型已识别但会产生警告 `Lake 转换未支持 card 类型: <type>`：
 
-- `video`：视频
 - `attachment`：附件（不同于 `file`）
-- `formula` / `math`：数学公式
+- `formula`：公式（当前仅 `math` card 有专门处理）
 - `callout`：提示块
 - `taskList`：任务列表
 - `mermaid` / `diagram`：图表
 - 其他自定义 card
 
-> 注：`table` 已支持基本转换，但复杂结构仍可能因为原始 HTML 结构异常而产生解析警告。
+> 注：
+> - `table` 已支持基本转换，但复杂结构仍可能因为原始 HTML 结构异常而产生解析警告。
+> - `lockedtext` 属于加密内容，当前实现会静默跳过，不写入正文，也不追加警告。
 
 ## 转换后检查
 
@@ -244,6 +313,14 @@ print('hello')
 ## 与 HTML 格式的关系
 
 API 响应中还存在 `body`（旧版 Markdown 格式）和 `body_html`（渲染后 HTML）。本工具仅使用 `body_lake` 作为转换来源。当 `body_lake` 完全为空时，工具会尝试回退使用 `body` 字段，并附带警告说明。
+
+如果 `body_lake` 存在，但转换后只剩空段落或占位节点，当前实现会追加：
+
+- `正文仅含空段落或占位节点，请核对语雀原文以防文档丢失`
+
+如果 `body_lake`、`body`、`content` 都没有有效正文，则会追加：
+
+- `接口未返回正文，请核对语雀原文以防文档丢失`
 
 ## 实现文件
 

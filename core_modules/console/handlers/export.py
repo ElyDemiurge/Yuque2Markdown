@@ -1,4 +1,9 @@
-"""控制台导出流程处理器。"""
+"""控制台导出流程处理器。
+
+本模块封装从导出前校验、确认、执行到结果展示的整条控制台导出链路。
+"""
+
+from __future__ import annotations
 
 import threading
 
@@ -24,7 +29,25 @@ def handle_export(
     format_error_detail,
     format_rate_limit,
 ) -> str:
-    """执行一次完整导出流程。"""
+    """执行一次完整导出流程。
+
+    参数:
+        config: 当前应用配置。
+        session: 当前控制台会话状态。
+        rate_limit_summary: 上一次请求的限流摘要，用于失败时原样回传。
+        build_client_from_config: 客户端构造函数。
+        apply_session_to_config: 将会话写回配置的函数。
+        persist_config: 保存配置的函数。
+        append_console_log: 控制台日志追加函数。
+        build_selected_docs_text: 文档范围文案构造函数。
+        build_confirmation_lines: 确认页文案构造函数。
+        build_result_lines: 结果页文案构造函数。
+        format_error_detail: 异常详情格式化函数。
+        format_rate_limit: 限流摘要格式化函数。
+
+    返回:
+        本次导出结束后的最新限流摘要。
+    """
     credential = active_auth_value(config)
     label = auth_mode_label(normalize_auth_mode(config.auth_mode))
     if not session.connection_ok or not credential:
@@ -51,16 +74,19 @@ def handle_export(
     client = build_client_from_config(config, credential)
     cancel_event = threading.Event()
     if hasattr(client, "set_cancel_event"):
+        # 导出层支持外部中断时，把取消事件传给客户端，便于长请求尽快退出。
         client.set_cancel_event(cancel_event)
     progress_ui = ExportProgressUI()
 
     def _on_progress(snapshot) -> None:
+        """桥接导出进度快照与 TUI 组件。"""
         if snapshot.current_stage == "已完成":
             progress_ui.finish(snapshot)
         else:
             progress_ui.update(snapshot)
 
     def _confirm_interrupt() -> bool:
+        """收到 Ctrl+C 时，二次确认是否终止本次导出。"""
         append_console_log(f"确认中断导出: 知识库={session.repo_input}")
         confirmed = run_confirmation(
             "确认退出导出",
@@ -79,6 +105,7 @@ def handle_export(
     result_lines_holder: dict[str, list[str]] = {"lines": []}
 
     def _build_completion_lines(export_result):
+        """在导出完成后缓存结果摘要，供主流程后续复用。"""
         lines = build_result_lines(config, session, export_result)
         result_lines_holder["lines"] = lines
         return lines
@@ -111,6 +138,7 @@ def handle_export(
     if config.ui_preferences.auto_save_after_export:
         config = persist_config(config, session, "post_export")
     session.last_exported_docs = result.exported_docs
+    # 优先复用进度界面生成的完成摘要，避免和最终弹窗文案出现细微差异。
     session.last_result_summary = result_lines_holder["lines"] or build_result_lines(config, session, result)
     session.status_message = "导出完成"
     session.last_error_text = ""

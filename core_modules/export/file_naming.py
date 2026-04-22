@@ -1,3 +1,5 @@
+"""文件名与路径安全处理工具。"""
+
 from __future__ import annotations
 
 import os
@@ -8,7 +10,15 @@ INVALID_FILE_CHARS = r'[\\/:*?"<>|]'
 
 
 def sanitize_name(name: str, fallback: str = "untitled") -> str:
-    """将标题清洗为可安全落盘的文件名。"""
+    """将标题清洗为可安全落盘的文件名。
+
+    参数:
+        name: 原始名称。
+        fallback: 清洗后为空时使用的兜底名称。
+
+    返回:
+        可安全用于文件名的字符串。
+    """
     # 明显像路径输入时只保留末段，避免把目录结构带进输出文件名；
     # 普通标题里的 "/"（例如 "/bin/sh"）则保留语义，统一替换成 "_".
     if os.path.isabs(name) or re.search(r"(^|[/\\])\.\.([/\\]|$)", name):
@@ -39,7 +49,13 @@ def sanitize_name(name: str, fallback: str = "untitled") -> str:
 
 
 def unique_name(name: str, used_names: set[str], suffix: str | None = None) -> str:
-    """为同目录下的重名文件生成唯一名称。"""
+    """为同目录下的重名文件生成唯一名称。
+
+    参数:
+        name: 原始名称。
+        used_names: 当前目录中已占用的名称集合，会被原地更新。
+        suffix: 首次冲突时优先尝试追加的自定义后缀。
+    """
     candidate = name
     index = 1
     while candidate in used_names:
@@ -54,7 +70,18 @@ def unique_name(name: str, used_names: set[str], suffix: str | None = None) -> s
 
 
 def safe_join(base: Path, *parts: str) -> Path:
-    """拼接路径，并保证结果始终位于 base 目录下。"""
+    """拼接路径，并保证结果始终位于 ``base`` 目录下。
+
+    参数:
+        base: 基础目录。
+        *parts: 待拼接的路径段。
+
+    返回:
+        经过清洗和校验后的路径对象。
+
+    异常:
+        ValueError: 检测到路径逃逸风险时抛出。
+    """
     result = base
     for part in parts:
         if re.match(r"^\.\.[/\\][^/\\]+$", part):

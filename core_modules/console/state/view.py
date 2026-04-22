@@ -1,4 +1,7 @@
-"""控制台状态展示辅助函数。"""
+"""控制台状态展示辅助函数。
+
+本模块负责把配置和会话状态转成界面展示文本，不做任何网络或文件操作。
+"""
 
 from __future__ import annotations
 
@@ -7,20 +10,29 @@ from core_modules.config.store import config_path
 
 
 def bool_text(value: bool) -> str:
+    """将布尔值转成中文开关状态。"""
     return "开启" if value else "关闭"
 
 
 def mask_token(token: str) -> str:
+    """按控制台展示需求遮罩 Token。"""
     if not token:
         return "未设置"
     return "******" + token[-4:] if len(token) > 4 else "******"
 
 
 def _confirm_value_line(label: str, value: str) -> str:
+    """构造确认页使用的带缩进键值行。"""
     return f"    {label}: {value}"
 
 
+def _result_value_line(label: str, value: str) -> str:
+    """构造结果页使用的带缩进键值行。"""
+    return f"  {label}: {value}"
+
+
 def dedupe_error_text(status_message: str, error_text: str) -> str:
+    """去除已包含在状态文案中的重复错误详情。"""
     detail = (error_text or "").strip()
     if not detail:
         return ""
@@ -30,6 +42,7 @@ def dedupe_error_text(status_message: str, error_text: str) -> str:
 
 
 def format_rate_limit(rate_limit: dict[str, str | int | None]) -> str:
+    """格式化接口限流信息，便于在状态栏与日志中复用。"""
     limit = rate_limit.get("limit")
     remaining = rate_limit.get("remaining")
     reset = rate_limit.get("reset")
@@ -43,6 +56,16 @@ def format_rate_limit(rate_limit: dict[str, str | int | None]) -> str:
 
 
 def build_connection_status(status_message: str, rate_limit_summary: str, error_text: str = "") -> str:
+    """构造带颜色前缀的连接状态文本。
+
+    参数:
+        status_message: 连接检查后的主状态文本。
+        rate_limit_summary: 限流摘要。
+        error_text: 额外错误详情。
+
+    返回:
+        供菜单状态栏直接展示的字符串。
+    """
     base = f"连接状态: {status_message}"
     detail = dedupe_error_text(status_message, error_text)
     if detail:
@@ -63,6 +86,16 @@ def build_connection_status(status_message: str, rate_limit_summary: str, error_
 
 
 def build_confirmation_lines(config: AppConfig, session: SessionState, *, build_selected_docs_text) -> list[str]:
+    """生成导出确认页的多行文本。
+
+    参数:
+        config: 当前应用配置。
+        session: 当前会话状态。
+        build_selected_docs_text: 文档范围文案生成函数，使用注入方式便于测试。
+
+    返回:
+        可直接传给确认弹窗的字符串列表。
+    """
     defaults = config.export_defaults
     auth_mode = normalize_auth_mode(config.auth_mode)
     if auth_mode == AUTH_MODE_COOKIE:
@@ -115,32 +148,46 @@ def build_confirmation_lines(config: AppConfig, session: SessionState, *, build_
 
 
 def build_result_lines(config: AppConfig, session: SessionState, result, *, build_selected_docs_text) -> list[str]:
+    """生成导出完成后的摘要文本。"""
     lines = [
         "[导出结果]",
-        f"知识库: {session.repo_display_name or result.repo.name or result.repo.book_slug}",
-        f"输出目录: {config.export_defaults.output_dir}",
-        f"文档范围: {build_selected_docs_text(session)}",
-        f"成功: {result.exported_docs} | 跳过: {result.skipped_docs} | 失败: {result.failed_docs}",
+        _result_value_line("知识库", session.repo_display_name or result.repo.name or result.repo.book_slug),
+        _result_value_line("输出目录", config.export_defaults.output_dir),
+        _result_value_line("文档范围", build_selected_docs_text(session)),
+        f"  成功: {result.exported_docs} | 跳过: {result.skipped_docs} | 失败: {result.failed_docs}",
     ]
     if result.elapsed_seconds is not None:
-        lines.append(f"总耗时: {result.elapsed_seconds:.1f} 秒")
-    lines.append(f"改写内部链接: {result.rewritten_links}")
+        lines.append(_result_value_line("总耗时", f"{result.elapsed_seconds:.1f} 秒"))
+    lines.append(_result_value_line("改写内部链接", str(result.rewritten_links)))
     if result.total_warnings > 0:
-        lines.append(f"总警告数: {result.total_warnings}")
+        lines.append(_result_value_line("总警告数", str(result.total_warnings)))
     if result.total_downloaded > 0:
         lines.append(
-            f"资源下载: 成功 {result.total_downloaded}"
-            + (f" | 失败 {result.total_download_failed}" if result.total_download_failed > 0 else "")
+            _result_value_line(
+                "资源下载",
+                f"成功 {result.total_downloaded}"
+                + (f" | 失败 {result.total_download_failed}" if result.total_download_failed > 0 else ""),
+            )
         )
     elif result.total_download_failed > 0:
-        lines.append(f"资源下载: 失败 {result.total_download_failed}")
+        lines.append(_result_value_line("资源下载", f"失败 {result.total_download_failed}"))
     if result.failed_items:
-        lines.append("[失败项预览]")
-        lines.extend(f"- {item}" for item in result.failed_items[:5])
+        lines.append("  [失败项预览]")
+        lines.extend(f"  - {item}" for item in result.failed_items[:5])
     return lines
 
 
 def build_status_lines(config: AppConfig, session: SessionState, rate_limit_summary: str) -> list[str]:
+    """构造主菜单底部状态栏文本。
+
+    参数:
+        config: 当前应用配置。
+        session: 当前会话状态。
+        rate_limit_summary: 最近一次请求的限流摘要。
+
+    返回:
+        固定顺序的状态行列表。
+    """
     token_msg = session.token_status_message
     auth_mode = normalize_auth_mode(config.auth_mode)
     auth_label = auth_mode_label(auth_mode)
@@ -183,6 +230,7 @@ def build_status_lines(config: AppConfig, session: SessionState, rate_limit_summ
         token_color = ""
         token_status = f"未设置 {auth_label}"
 
+    # 知识库状态优先显示带名称的命名空间，其次回退到原始输入。
     if session.repo_namespace:
         repo_status = f"{session.repo_display_name or session.repo_namespace}"
     elif session.repo_input:
@@ -190,6 +238,7 @@ def build_status_lines(config: AppConfig, session: SessionState, rate_limit_summ
     else:
         repo_status = "未选择"
 
+    # 如果用户没有显式勾选文档，则展示当前知识库的总文档数。
     if session.selected_doc_ids:
         scope_status = f"已选 {len(session.selected_doc_ids)} 篇"
     elif session.selected_doc_count:

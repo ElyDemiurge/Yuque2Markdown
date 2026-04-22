@@ -1,4 +1,9 @@
-"""网络与代理子菜单控制器。"""
+"""网络与代理子菜单控制器。
+
+本模块负责代理参数配置以及基础网络诊断入口。
+"""
+
+from __future__ import annotations
 
 from core_modules.console.helpers import parse_action
 from core_modules.config.models import AppConfig, SessionState
@@ -10,6 +15,7 @@ class AdvancedSettingsController:
     """管理“网络与代理”子菜单。"""
 
     def __init__(self, config: AppConfig, session: SessionState, *, build_client_from_config, status_lines_builder=None):
+        """初始化网络与代理设置控制器。"""
         self.config = config
         self.session = session
         self.build_client_from_config = build_client_from_config
@@ -113,6 +119,7 @@ class AdvancedSettingsController:
             self.session.network_test_message = "代理未配置，请先设置代理地址"
             return
         try:
+            # 诊断逻辑复用当前配置构造的客户端，避免测试路径与实际运行参数不一致。
             client = self.build_client_from_config(self.config, active_auth_value(self.config))
             success, message = client.test_proxy()
             if success:

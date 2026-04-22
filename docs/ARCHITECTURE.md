@@ -76,6 +76,13 @@ core_modules.export.exporter
 - `handlers/` 更偏业务动作与状态更新
 - `state/` 负责将运行时数据整理成可显示文本
 
+当前控制台交互细节：
+
+- 主菜单和子菜单统一使用 `Esc` 返回，当前版本已不再使用 `q` 作为返回键。
+- 知识库列表支持输入过滤与 `/` 过滤模式，过滤词支持方向键编辑。
+- 文档树过滤为实时刷新；命中目录名时会自动展开目录，命中折叠目录内文档时也会显示路径。
+- 导出进度界面支持区块切换和滚动查看；导出结束后可聚焦“返回”按钮退出。
+
 ### `core_modules/export/`
 
 该目录用于导出执行、API 调用、断点恢复、日志和文件写入。
@@ -123,6 +130,8 @@ Lake 格式的详细规则、卡片类型和警告规则见 [语雀lake格式解
 - `export/client.py` 请求语雀 API
 - 返回结果写回 `SessionState`
 - 状态栏和菜单根据 `SessionState` 更新显示
+
+当前版本里，控制台中的“刷新连接状态”默认走异步刷新，避免在网络请求期间阻塞菜单界面。
 
 ### 3. 导出阶段
 
@@ -191,6 +200,7 @@ Lake 格式的详细规则、卡片类型和警告规则见 [语雀lake格式解
 
 - 配置与校验：`test_config_store.py`、`test_config_validator.py`
 - 控制台与菜单：`test_console_app.py`、`test_console_menu.py`
+- 知识库与文档选择：`test_repo_handler.py`、`test_selector.py`
 - 导出与文件处理：`test_export_flow.py`、`test_file_naming.py`、`test_logger.py`、`test_writer.py`、`test_checkpoint.py`
 - Lake 转换与资源处理：`test_markdown_converter.py`、`test_localizer.py`
 - 目录树与选择器：`test_resolver.py`、`test_selector.py`、`test_toc_builder.py`

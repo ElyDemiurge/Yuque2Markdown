@@ -1,4 +1,7 @@
-"""控制台连接状态处理逻辑。"""
+"""控制台连接状态处理逻辑。
+
+本模块负责检查登录凭据、读取当前用户信息，并把结果同步到 ``SessionState``。
+"""
 
 from __future__ import annotations
 
@@ -22,7 +25,23 @@ def refresh_connection_state(
     append_console_log,
     interactive: bool = False,
 ) -> tuple[list[dict], str, str, bool]:
-    """刷新登录凭据、当前用户和连接状态。"""
+    """刷新登录凭据、当前用户和连接状态。
+
+    参数:
+        token: 当前登录凭据，可能是 Token，也可能是 Cookie。
+        config: 当前应用配置。
+        session: 当前控制台会话状态。
+        build_client_from_config: 客户端构造函数。
+        list_accessible_repos: 拉取当前账号可访问知识库的函数。
+        build_connection_status: 构造状态栏文案的函数。
+        format_rate_limit: 格式化限流信息的函数。
+        format_error_detail: 格式化异常详情的函数。
+        append_console_log: 控制台日志追加函数。
+        interactive: 是否以异步刷新方式运行，供 TUI 在刷新期间持续响应按键。
+
+    返回:
+        ``(知识库列表, 限流摘要, 状态栏文本, 是否连接成功)``。
+    """
     session.network_test_message = ""
     label = auth_mode_label(normalize_auth_mode(config.auth_mode))
     if not token:
@@ -34,6 +53,7 @@ def refresh_connection_state(
         return [], "暂无", build_connection_status(session.token_status_message, "暂无", session.last_error_text), False
 
     def _run_refresh() -> tuple[list[dict], str, str, bool]:
+        # 连接检查不应引入重试与退避，否则交互界面会显得卡顿。
         client = build_client_from_config(
             config,
             token,
@@ -73,6 +93,7 @@ def refresh_connection_state(
             append_console_log("开始刷新连接状态")
 
             def _worker() -> None:
+                # 后台线程只负责执行检查并回填结果，UI 状态由主线程统一折回。
                 try:
                     refresh_state.result = _run_refresh()
                 except Exception as exc:  # noqa: BLE001
@@ -97,6 +118,7 @@ def refresh_connection_state(
         error_str = str(exc)
         proxy = config.export_defaults.proxy
         if proxy.enabled and proxy.host:
+            # 主请求失败后补做一次代理连通性检查，尽量给出更明确的失败原因。
             client = build_client_from_config(config, token, timeout=config.export_defaults.token_check_timeout, max_retries=1)
             proxy_ok, proxy_msg = client.test_proxy()
             if not proxy_ok:

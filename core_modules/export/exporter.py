@@ -1,3 +1,8 @@
+"""知识库导出器实现。
+
+本模块负责知识库目录遍历、单文档导出、资源本地化、断点维护和进度回调。
+"""
+
 from __future__ import annotations
 
 import time
@@ -38,7 +43,12 @@ def build_doc_markdown_result(
     fetch_binary=None,
     doc_slug_map: dict[str, str] | None = None,
 ):
-    """构建单篇文档最终 Markdown 结果，供导出与根据 .lake 重新生成 Markdown 共用。"""
+    """构建单篇文档最终 Markdown 结果。
+
+    说明:
+        导出流程与“根据 .lake 重新生成 Markdown”共用同一套资源本地化逻辑，避免两处
+        处理结果不一致。
+    """
     if render_result is None:
         if doc_data is None:
             raise ValueError("doc_data 和 render_result 不能同时为空")
@@ -60,6 +70,7 @@ def build_doc_markdown_result(
 class Exporter:
     """负责按目录树导出知识库文档与资源。"""
     def __init__(self, client: YuqueClient, progress_callback: Callable[[ProgressSnapshot], None] | None = None) -> None:
+        """初始化导出器。"""
         self.client = client
         self.progress_callback = progress_callback
 
@@ -96,6 +107,7 @@ class Exporter:
         checkpoint.doc_slug_map.update(repo_slug_map)
 
         result = ExportResult(repo=repo)
+        # 先收集实际待导出的标题列表，用于初始化进度条总量与等待预览。
         queue = self._collect_doc_titles(toc_tree, checkpoint, options)
         total_docs = len(queue)
         selection_warning = None
@@ -204,6 +216,7 @@ class Exporter:
                 continue
 
             if node.node_type == "LINK":
+                # 链接节点只在全量导出时保留为跳转文档；按选中文档导出时直接忽略。
                 if options.selected_doc_ids is not None:
                     continue
                 content = f"# {node.title}\n\n原始链接：{node.url or ''}\n"
@@ -528,10 +541,12 @@ class Exporter:
             self.client.set_debug_logger(None)
 
     def _check_cancel(self) -> None:
+        """把取消检查委托给客户端。"""
         if hasattr(self.client, "_check_cancel"):
             self.client._check_cancel()
 
     def _build_doc_output_paths(self, current_dir: Path, safe_name: str, options: ExportOptions) -> DocOutputPaths:
+        """构造单篇文档的输出路径集合。"""
         doc_dir = current_dir / safe_name
         ensure_dir(doc_dir)
         assets_dir = doc_dir / options.assets_dir_name
@@ -592,16 +607,19 @@ class Exporter:
         return titles
 
     def _advance_waiting_preview(self, progress: ProgressSnapshot, current_title: str) -> list[str]:
+        """从等待预览中移除当前文档，并返回新的前几项。"""
         waiting_titles = progress.details.get("_waiting_titles", [])
         if isinstance(waiting_titles, list):
             try:
                 waiting_titles.remove(current_title)
             except ValueError:
+                # 当前标题可能已被提前移除，直接保持现状即可。
                 pass
             return waiting_titles[:5]
         return [title for title in progress.waiting_preview if title != current_title][:5]
 
     def _push_recent(self, items: list[str], value: str, limit: int | None = None) -> list[str]:
+        """向最近列表追加一项。"""
         if limit is None:
             queue = deque(items)
             queue.append(value)
@@ -611,7 +629,11 @@ class Exporter:
         return list(queue)
 
     def _build_repo_slug_map(self, repo_dir: Path, nodes: list[TocNode], docs_by_id: dict, current_dir: Path | None = None, used_names: dict[Path, set[str]] | None = None, selected_doc_ids: set[int] | None = None) -> dict[str, str]:
-        """构建文档 slug 到路径的映射，只处理包含选中文档的目录"""
+        """构建文档 slug 到路径的映射。
+
+        说明:
+            仅遍历实际会参与导出的目录，避免为未导出文档生成无意义映射。
+        """
         current_dir = current_dir or repo_dir
         used_names = used_names or {}
         slug_map: dict[str, str] = {}
@@ -638,6 +660,7 @@ class Exporter:
         return slug_map
 
     def _has_selected_docs(self, nodes: list[TocNode], selected_doc_ids: set[int] | None) -> bool:
+        """判断一组节点中是否包含待导出的文档。"""
         for node in nodes:
             if node.node_type == "TITLE":
                 if self._has_selected_docs(node.children, selected_doc_ids):

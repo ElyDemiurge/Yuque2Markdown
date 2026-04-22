@@ -302,6 +302,14 @@ def _render_lake_list_item(element: ET.Element, *, warnings: list[str], indent_l
                 lines.extend(nested.splitlines())
             continue
 
+        if tag == "card" and str(child.attrib.get("name") or "").strip().lower() == "label":
+            rendered = _render_lake_card(child, warnings=warnings)
+            if rendered.strip():
+                inline_parts.append(rendered.strip())
+            if child.tail and child.tail.strip():
+                inline_parts.append(html.unescape(child.tail.strip()))
+            continue
+
         if tag in {"p", "blockquote", "card"}:
             rendered = _render_lake_block(child, warnings=warnings, list_indent=indent_level + 1).strip()
             if rendered:
@@ -457,6 +465,9 @@ def _render_lake_card(element: ET.Element, *, warnings: list[str]) -> str:
 
     if name == "bookmarkinline":
         return _render_lake_bookmarkinline(element, payload)
+
+    if name == "label":
+        return _render_lake_label(payload)
 
     if name == "board":
         return _render_lake_board(payload)
@@ -748,6 +759,14 @@ def _render_lake_board(payload: dict) -> str:
     if src:
         parts.append(f"![board]({src})")
     return "\n\n".join(part for part in parts if part)
+
+
+def _render_lake_label(payload: dict) -> str:
+    """转换 label card 为纯文本标签。"""
+    label = str(payload.get("label") or payload.get("title") or "").strip()
+    if not label:
+        return ""
+    return f"【{label}】"
 
 
 def _render_lake_math(payload: dict) -> str:

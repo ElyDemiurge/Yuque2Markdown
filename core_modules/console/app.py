@@ -1,3 +1,8 @@
+"""控制台主入口与各子模块装配逻辑。
+
+本模块负责驱动控制台主循环，并把菜单、状态展示、控制器与处理器拼接成完整交互。
+"""
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -30,7 +35,11 @@ ADVANCED_SETTINGS_MENU_KEY = "advanced_settings"
 
 
 def run_console_app() -> int:
-    """运行控制台主循环并处理用户操作。"""
+    """运行控制台主循环并处理用户操作。
+
+    返回:
+        进程退出码。当前实现正常退出时始终返回 ``0``。
+    """
     config = load_config()
     session = SessionState(repo_input=config.last_repo_input)
     rate_limit_summary = "暂无"
@@ -245,7 +254,20 @@ def _build_client_from_config(
     network_backoff_seconds: float | None = None,
     max_backoff_seconds: float | None = None,
 ):
-    """按当前配置构造 YuqueClient，并允许连接检查场景覆盖部分超时/重试参数。"""
+    """按当前配置构造 YuqueClient。
+
+    参数:
+        config: 当前应用配置。
+        credential: 当前登录凭据，可能是 Token 或 Cookie。
+        timeout: 可选超时覆盖值。
+        max_retries: 可选最大重试次数覆盖值。
+        rate_limit_backoff_seconds: 可选限流退避覆盖值。
+        network_backoff_seconds: 可选网络错误退避覆盖值。
+        max_backoff_seconds: 可选单次等待上限覆盖值。
+
+    返回:
+        按当前配置装配完成的客户端实例。
+    """
     defaults = config.export_defaults
     proxy = defaults.proxy
     proxy_host = proxy.host or None if proxy.enabled else None
@@ -269,21 +291,25 @@ def _build_client_from_config(
 
 
 def _handle_repo_input_inline(config: AppConfig, session: SessionState, value: str) -> bool:
+    """转发知识库手动输入处理。"""
     from core_modules.console.handlers.repo import handle_repo_input_inline as _handler
     return _handler(config, session, value, build_client_from_config=_build_client_from_config, append_console_log=_append_console_log)
 
 
 def _handle_repo_selection(config: AppConfig, session: SessionState, repos: list[dict], rate_limit_summary: str) -> bool:
+    """转发知识库列表选择处理。"""
     from core_modules.console.handlers.repo import handle_repo_selection as _handler
     return _handler(config, session, repos, rate_limit_summary, build_client_from_config=_build_client_from_config, append_console_log=_append_console_log)
 
 
 def _handle_doc_selection(config: AppConfig, session: SessionState, rate_limit_summary: str) -> tuple[str, bool]:
+    """转发文档树选择处理。"""
     from core_modules.console.handlers.repo import handle_doc_selection as _handler
     return _handler(config, session, rate_limit_summary, build_client_from_config=_build_client_from_config, append_console_log=_append_console_log)
 
 
 def _handle_export(config: AppConfig, session: SessionState, rate_limit_summary: str) -> str:
+    """转发导出处理，并统一注入 console 层依赖。"""
     from core_modules.console.handlers.export import handle_export as _handler
     return _handler(
         config,
@@ -302,6 +328,7 @@ def _handle_export(config: AppConfig, session: SessionState, rate_limit_summary:
 
 
 def _run_export_settings_menu(config: AppConfig, session: SessionState) -> bool:
+    """运行“导出路径与资源”子菜单。"""
     from core_modules.console.controllers.export_settings import ExportSettingsController
 
     controller = ExportSettingsController(config, session, status_lines_builder=_build_submenu_status_lines)
@@ -309,22 +336,31 @@ def _run_export_settings_menu(config: AppConfig, session: SessionState) -> bool:
 
 
 def _run_runtime_settings_menu(config: AppConfig, session: SessionState) -> bool:
+    """运行“运行与网络设置”子菜单。"""
     from core_modules.console.controllers.runtime_settings import RuntimeSettingsController
     controller = RuntimeSettingsController(config, session, status_lines_builder=_build_submenu_status_lines)
     return controller.run()
 
 
 def _persist_config(config: AppConfig, session: SessionState, reason: str) -> AppConfig:
+    """转发配置保存逻辑，并注入控制台日志函数。"""
     from core_modules.console.handlers.config import persist_config
     return persist_config(config, session, reason, append_console_log=_append_console_log)
 
 
 def _build_main_title(session: SessionState) -> str:
+    """构造主界面标题，必要时追加未保存标记。"""
     base = f"Yuque2Markdown {APP_VERSION} 控制台"
     return f"{base} [未保存]" if session.dirty else base
 
 
 def _build_main_menu_items(config: AppConfig, session: SessionState, rate_limit_summary: str) -> list[MenuItem]:
+    """构造主菜单项列表。
+
+    说明:
+        ``rate_limit_summary`` 当前未直接参与菜单项渲染，但保留参数以维持调用接口稳定，
+        便于后续扩展状态感知菜单。
+    """
     has_token = bool((config.token or "").strip())
     has_cookie = bool((config.cookie or "").strip())
     auth_mode = normalize_auth_mode(config.auth_mode)
@@ -384,6 +420,7 @@ def _build_main_menu_items(config: AppConfig, session: SessionState, rate_limit_
 
 
 def _build_cookie_load_text(session: SessionState, has_cookie: bool) -> str:
+    """构造 Cookie 载入状态文案。"""
     if not has_cookie:
         return "未加载，可从浏览器读取"
     source = (session.cookie_source_label or "").strip()
@@ -395,6 +432,7 @@ def _build_cookie_load_text(session: SessionState, has_cookie: bool) -> str:
 
 
 def _run_advanced_settings_menu(config: AppConfig, session: SessionState) -> bool:
+    """运行“网络与代理”子菜单。"""
     from core_modules.console.controllers.advanced_settings import AdvancedSettingsController
 
     controller = AdvancedSettingsController(
@@ -407,16 +445,19 @@ def _run_advanced_settings_menu(config: AppConfig, session: SessionState) -> boo
 
 
 def _build_confirmation_lines(config: AppConfig, session: SessionState) -> list[str]:
+    """构造导出确认页文本。"""
     from core_modules.console.state.view import build_confirmation_lines
     return build_confirmation_lines(config, session, build_selected_docs_text=_build_selected_docs_text)
 
 
 def _build_result_lines(config: AppConfig, session: SessionState, result) -> list[str]:
+    """构造导出完成摘要文本。"""
     from core_modules.console.state.view import build_result_lines
     return build_result_lines(config, session, result, build_selected_docs_text=_build_selected_docs_text)
 
 
 def _build_status_lines(config: AppConfig, session: SessionState, rate_limit_summary: str) -> list[str]:
+    """构造主菜单底部状态栏文本。"""
     from core_modules.console.state.view import build_status_lines
     return build_status_lines(config, session, rate_limit_summary)
 
@@ -427,31 +468,31 @@ def _build_submenu_status_lines(config: AppConfig, session: SessionState) -> lis
 
 
 def _build_selected_docs_text(session: SessionState) -> str:
+    """构造文档范围摘要。"""
     from core_modules.console.state.manager import build_selected_docs_text
     return build_selected_docs_text(session)
 
 
 def _mask_token(token: str) -> str:
+    """按控制台展示规则遮罩 Token。"""
     from core_modules.console.state.view import mask_token
     return mask_token(token)
 
 
 def _remember_menu_index(session: SessionState, menu_key: str, items: list[MenuItem], action: str) -> None:
+    """记录菜单焦点位置。"""
     from core_modules.console.state.manager import remember_menu_index
     remember_menu_index(session, menu_key, items, action)
 
 
-def _bool_text(value: bool) -> str:
-    from core_modules.console.state.view import bool_text
-    return bool_text(value)
-
-
 def _apply_session_to_config(config: AppConfig, session: SessionState) -> AppConfig:
+    """将会话状态折回配置对象。"""
     from core_modules.console.handlers.config import apply_session_to_config
     return apply_session_to_config(config, session)
 
 
 def _refresh_connection_state(token: str, config: AppConfig, session: SessionState, interactive: bool = False) -> tuple[list[dict], str, str, bool]:
+    """转发连接刷新处理，并统一注入 console 层依赖。"""
     from core_modules.console.handlers.connection import refresh_connection_state
 
     return refresh_connection_state(
@@ -486,6 +527,11 @@ def _append_console_event(event: str, **fields: object) -> None:
 
 
 def _build_status_detail(rate_limit_summary: str, error_text: str) -> str:
+    """按优先级拼装状态详情文案。
+
+    说明:
+        该函数主要供单元测试和潜在调试场景复用，因此继续保留在主入口模块。
+    """
     if error_text:
         return f"详情: {_dedupe_error_text('', error_text)}"
     if rate_limit_summary and rate_limit_summary != "暂无" and rate_limit_summary != "429 LIMIT":
@@ -494,11 +540,13 @@ def _build_status_detail(rate_limit_summary: str, error_text: str) -> str:
 
 
 def _dedupe_error_text(status_message: str, error_text: str) -> str:
+    """移除已包含在状态文案中的重复错误详情。"""
     from core_modules.console.state.view import dedupe_error_text
     return dedupe_error_text(status_message, error_text)
 
 
 def _parse_non_negative_float(value: str | None) -> float | None:
+    """解析非负浮点数，并在失败时弹出中文提示。"""
     if value is None:
         return None
     try:
@@ -513,6 +561,7 @@ def _parse_non_negative_float(value: str | None) -> float | None:
 
 
 def _parse_positive_int(value: str | None) -> int | None:
+    """解析正整数，并在失败时弹出中文提示。"""
     if value is None:
         return None
     try:
@@ -527,6 +576,7 @@ def _parse_positive_int(value: str | None) -> int | None:
 
 
 def _parse_optional_positive_int(value: str | None) -> int | None:
+    """解析可选正整数，空白输入视为未设置。"""
     if value is None:
         return None
     if not value.strip():
@@ -535,15 +585,18 @@ def _parse_optional_positive_int(value: str | None) -> int | None:
 
 
 def _format_rate_limit(rate_limit: dict[str, str | int | None]) -> str:
+    """格式化限流信息。"""
     from core_modules.console.state.view import format_rate_limit
     return format_rate_limit(rate_limit)
 
 
 def _build_connection_status(status_message: str, rate_limit_summary: str, error_text: str = "") -> str:
+    """构造带颜色前缀的连接状态文本。"""
     from core_modules.console.state.view import build_connection_status
     return build_connection_status(status_message, rate_limit_summary, error_text)
 
 
 def _format_error_detail(exc: Exception) -> str:
+    """格式化异常详情。"""
     from core_modules.console.handlers.error_handler import format_error_detail
     return format_error_detail(exc)

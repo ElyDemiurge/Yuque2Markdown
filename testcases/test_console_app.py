@@ -235,7 +235,9 @@ def test_build_result_lines_uses_total_elapsed_and_omits_config_save() -> None:
 
     lines = _build_result_lines(config, session, result)
 
-    assert "总耗时: 31.3 秒" in lines
+    assert "  总耗时: 31.3 秒" in lines
+    assert "  知识库: Android逆向学习" in lines
+    assert "  成功: 1 | 跳过: 0 | 失败: 0" in lines
     assert not any(line.startswith("配置保存:") for line in lines)
 
 

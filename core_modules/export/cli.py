@@ -1,3 +1,9 @@
+"""导出流程对外装配入口。
+
+本模块把客户端、解析器、目录树构建器和导出器拼接成更高层的便捷函数，供控制台
+和脚本侧复用。
+"""
+
 from __future__ import annotations
 
 from typing import Callable
@@ -26,6 +32,7 @@ def build_client(
     proxy_port: int = 7890,
     proxy_test_url: str = "https://www.baidu.com",
 ) -> YuqueClient:
+    """按给定参数构造 ``YuqueClient`` 实例。"""
     return YuqueClient(
         token=token,
         cookie=cookie,
@@ -43,6 +50,7 @@ def build_client(
 
 
 def fetch_repo_toc(client: YuqueClient, repo_input: str) -> tuple[RepoRef, list[TocNode]]:
+    """读取知识库目录树并转换为内部节点结构。"""
     repo = resolve_repo_input(repo_input)
     raw_toc = client.get_repo_toc_tree(repo.group_login, repo.book_slug)
     return repo, build_toc_tree(raw_toc)
@@ -54,12 +62,14 @@ def execute_export(
     *,
     progress_callback: Callable[[ProgressSnapshot], None] | None = None,
 ) -> ExportResult:
+    """执行整库导出。"""
     repo = resolve_repo_input(options.repo_input)
     exporter = Exporter(client, progress_callback=progress_callback)
     return exporter.export_repo(repo, options)
 
 
 def handle_export_error(exc: Exception) -> tuple[int, str]:
+    """把导出异常转换为退出码与用户提示文案。"""
     if isinstance(exc, YuqueAuthError):
         return 1, f"认证失败: {exc}"
     if isinstance(exc, YuquePermissionError):
@@ -73,6 +83,11 @@ def handle_export_error(exc: Exception) -> tuple[int, str]:
 
 
 def list_accessible_repos(client: YuqueClient) -> tuple[dict, list[dict]]:
+    """获取当前账号可访问的知识库列表。
+
+    说明:
+        Cookie 登录与 OpenAPI 登录走的是两套接口，因此这里按登录方式分别处理。
+    """
     user_payload = client.get_current_user()
     user = user_payload.get("data", {})
     login = user.get("login")

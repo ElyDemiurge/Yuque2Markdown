@@ -1,4 +1,9 @@
-"""导出设置子菜单控制器。"""
+"""导出设置子菜单控制器。
+
+本模块负责“导出路径与资源”页面的菜单构造与交互处理。
+"""
+
+from __future__ import annotations
 
 from core_modules.config.models import AUTH_MODE_COOKIE, AppConfig, SessionState, normalize_auth_mode, normalize_attachment_suffixes, parse_attachment_suffixes_input
 from core_modules.console.helpers import parse_action, toggle_config_value
@@ -23,6 +28,7 @@ class ExportSettingsController:
     """管理“导出路径与资源”子菜单。"""
 
     def __init__(self, config: AppConfig, session: SessionState, *, status_lines_builder=None):
+        """初始化导出设置控制器。"""
         self.config = config
         self.session = session
         self.status_lines_builder = status_lines_builder
@@ -116,6 +122,11 @@ class ExportSettingsController:
         return items
 
     def _build_attachment_suffix_items(self, *, disabled: bool) -> list[MenuItem]:
+        """构造附件类型配置区域。
+
+        参数:
+            disabled: 为 ``True`` 时，仅展示不可编辑的只读提示。
+        """
         selected = normalize_attachment_suffixes(self.config.export_defaults.attachment_suffixes)
         items: list[MenuItem] = []
         for group_key in ("archives", "docs", "media"):
@@ -201,12 +212,15 @@ class ExportSettingsController:
         self.changed = True
 
     def _all_resources_enabled(self) -> bool:
+        """判断是否启用了“下载全部附件”。"""
         return normalize_attachment_suffixes(self.config.export_defaults.attachment_suffixes) == ["*"]
 
     def _toggle_attachment_all(self) -> None:
+        """切换“下载全部附件”状态。"""
         self._apply_attachment_suffixes([] if self._all_resources_enabled() else ["*"])
 
     def _toggle_attachment_group(self, group_key: str) -> None:
+        """切换一个附件分组的全部扩展名。"""
         selected = normalize_attachment_suffixes(self.config.export_defaults.attachment_suffixes)
         if selected == ["*"]:
             selected = []
@@ -220,6 +234,7 @@ class ExportSettingsController:
         self._apply_attachment_suffixes(selected)
 
     def _toggle_attachment_suffix(self, suffix: str) -> None:
+        """切换单个附件扩展名。"""
         selected = normalize_attachment_suffixes(self.config.export_defaults.attachment_suffixes)
         if selected == ["*"]:
             selected = []
@@ -230,17 +245,21 @@ class ExportSettingsController:
         self._apply_attachment_suffixes(selected)
 
     def _group_selected(self, selected: list[str], suffixes: list[str]) -> bool:
+        """判断一个扩展名分组是否已全部选中。"""
         return bool(suffixes) and all(suffix in selected for suffix in suffixes)
 
     def _custom_suffixes(self, selected: list[str]) -> list[str]:
+        """提取用户额外配置的自定义扩展名。"""
         known = {suffix for _label, suffixes in ATTACHMENT_SUFFIX_GROUPS.values() for suffix in suffixes}
         return [suffix for suffix in selected if suffix not in known and suffix != "*"]
 
     def _apply_attachment_suffixes(self, values: list[str]) -> None:
+        """写入附件扩展名配置并同步脏状态。"""
         self.config.export_defaults.attachment_suffixes = normalize_attachment_suffixes(values)
         self._mark_attachment_suffixes_changed()
 
     def _handle_custom_attachment_suffixes(self, value: str) -> None:
+        """处理自定义附件扩展名输入。"""
         raw = value.replace("，", ",").strip()
         selected = normalize_attachment_suffixes(self.config.export_defaults.attachment_suffixes)
         if selected == ["*"]:
@@ -270,6 +289,7 @@ class ExportSettingsController:
                         return
 
     def _mark_attachment_suffixes_changed(self) -> None:
+        """在附件类型配置变更后刷新状态提示。"""
         selected = normalize_attachment_suffixes(self.config.export_defaults.attachment_suffixes)
         if selected == ["*"]:
             message = "已更新附件资源下载: 所有资源"

@@ -123,18 +123,31 @@ def _refresh_items(state: _SelectorState) -> None:
     state.index = min(state.index, len(state.items) - 1)
 
 
-def _flatten_subtree(nodes: list[TocNode], expanded_keys: set[str], depth: int = 0) -> list[_MenuItem]:
+def _flatten_subtree(nodes: list[TocNode], depth: int = 0) -> list[_MenuItem]:
+    """展开整棵子树。
+
+    说明:
+        当过滤词直接命中目录名时，界面应展示该目录下的全部子项，而不受用户当前展开
+        状态影响。
+    """
     items: list[_MenuItem] = []
     for node in nodes:
         key = _node_key(node)
         expanded = bool(node.children)
         items.append(_MenuItem(key=key, node=node, depth=depth, expanded=expanded))
         if node.children:
-            items.extend(_flatten_subtree(node.children, expanded_keys, depth + 1))
+            items.extend(_flatten_subtree(node.children, depth + 1))
     return items
 
 
 def _flatten_visible(nodes: list[TocNode], expanded_keys: set[str], depth: int = 0, filter_text: str = "") -> list[_MenuItem]:
+    """按当前展开状态和过滤词生成可见节点列表。
+
+    规则:
+        1. 无过滤词时，严格按照用户展开状态渲染。
+        2. 过滤词命中目录名时，强制展开该目录整棵子树，便于直接查看目录下文档。
+        3. 过滤词命中深层文档时，即使上层目录原本折叠，也会沿路径自动展开。
+    """
     items: list[_MenuItem] = []
     query = filter_text.lower().strip()
     for node in nodes:
@@ -144,7 +157,7 @@ def _flatten_visible(nodes: list[TocNode], expanded_keys: set[str], depth: int =
         if not query:
             children_items = _flatten_visible(node.children, expanded_keys, depth + 1, filter_text=filter_text) if node.children and expanded else []
         elif matches_self and node.children:
-            children_items = _flatten_subtree(node.children, expanded_keys, depth + 1)
+            children_items = _flatten_subtree(node.children, depth + 1)
             expanded = True
         else:
             children_items = _flatten_visible(node.children, expanded_keys, depth + 1, filter_text=filter_text) if node.children else []

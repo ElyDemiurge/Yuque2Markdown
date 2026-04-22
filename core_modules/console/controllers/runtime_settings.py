@@ -1,4 +1,9 @@
-"""运行与网络设置子菜单控制器。"""
+"""运行与网络设置子菜单控制器。
+
+本模块负责导出参数、重试策略和持久化偏好等运行时选项。
+"""
+
+from __future__ import annotations
 
 from core_modules.console.helpers import (
     parse_action,
@@ -15,6 +20,7 @@ class RuntimeSettingsController:
     """管理“运行与网络设置”子菜单。"""
 
     def __init__(self, config: AppConfig, session: SessionState, *, status_lines_builder=None):
+        """初始化运行时设置控制器。"""
         self.config = config
         self.session = session
         self.status_lines_builder = status_lines_builder
@@ -154,7 +160,11 @@ class RuntimeSettingsController:
             self.changed = True
 
     def _handle_max_docs(self, value: str) -> None:
-        """处理最大导出文档数修改。"""
+        """处理最大导出文档数修改。
+
+        说明:
+            空字符串会被视为“不限”，因此这里即使解析结果为 ``None`` 也属于有效输入。
+        """
         parsed = parse_optional_positive_int(value)
         self.config.export_defaults.max_docs = parsed
         self.session.status_message = "已更新最多导出文档数"

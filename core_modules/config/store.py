@@ -20,6 +20,7 @@ from core_modules.config.models import (
 from core_modules.config.validator import validate_config, format_validation_errors
 
 CONFIG_FILE_NAME = "yuque2markdown.config.json"
+DEFAULT_COOKIE_PLACEHOLDER = "_yuque_session="
 
 
 def _translate_legacy_file_type(file_type: object) -> list[str]:
@@ -86,6 +87,7 @@ def save_config(config: AppConfig, base_dir: Path | None = None, *, validate: bo
             raise ValueError("\n".join(error_lines))
 
     path = config_path(base_dir)
+    path_exists = path.exists()
     payload = asdict(config)
     payload["export_defaults"]["attachment_suffixes"] = normalize_attachment_suffixes(
         config.export_defaults.attachment_suffixes
@@ -94,5 +96,7 @@ def save_config(config: AppConfig, base_dir: Path | None = None, *, validate: bo
         payload["token"] = ""
     if not config.persist_cookie:
         payload["cookie"] = ""
+    elif not path_exists and not payload["cookie"]:
+        payload["cookie"] = DEFAULT_COOKIE_PLACEHOLDER
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     return path
