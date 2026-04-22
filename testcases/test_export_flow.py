@@ -204,6 +204,99 @@ def test_export_repo_emits_attachment_warning_without_download_failure(tmp_path:
     )
 
 
+class MissingImageSrcWarningClient(FakeClient):
+    def get_all_repo_docs(self, group_login: str, book_slug: str):
+        return [{"id": 31, "slug": "doc-image-warning", "title": "图片异常文档"}]
+
+    def get_repo_toc(self, group_login: str, book_slug: str):
+        return {"data": [{"type": "DOC", "title": "图片异常文档", "doc_id": 31, "slug": "doc-image-warning"}]}
+
+    def get_doc_detail(self, group_login: str, book_slug: str, doc_id_or_slug: str):
+        body_lake = (
+            '<p>正文</p>'
+            '<p><card type="inline" name="image" '
+            'value="data:%7B%22src%22%3A%22%22%2C%22status%22%3A%22error%22%2C'
+            '%22message%22%3A%22%E5%9B%BE%E7%89%87%E4%B8%8D%E6%94%AF%E6%8C%81'
+            '%E6%8B%B7%E8%B4%9D%E5%A4%8D%E5%88%B6%EF%BC%8C%E8%AF%B7%E5%8D%95'
+            '%E7%8B%AC%E5%A4%8D%E5%88%B6%E4%B8%8A%E4%BC%A0%22%7D"></card></p>'
+        )
+        return {"data": {"id": 31, "slug": "doc-image-warning", "title": "图片异常文档", "format": "lake", "body_lake": body_lake}}
+
+
+def test_export_repo_logs_and_emits_warning_for_lake_image_card_missing_src(tmp_path: Path) -> None:
+    snapshots: list[ProgressSnapshot] = []
+
+    def on_progress(snapshot: ProgressSnapshot) -> None:
+        snapshots.append(
+            ProgressSnapshot(
+                current_stage=snapshot.current_stage,
+                latest_warning=snapshot.latest_warning,
+                new_warnings=list(snapshot.new_warnings),
+            )
+        )
+
+    exporter = Exporter(MissingImageSrcWarningClient(), progress_callback=on_progress)
+    repo = RepoRef(group_login="cyberangel", book_slug="rg9gdm")
+    options = ExportOptions(repo_input="cyberangel/rg9gdm", output_dir=tmp_path, request_interval=0)
+
+    result = exporter.export_repo(repo, options)
+
+    assert result.exported_docs == 1
+    assert any(
+        "Lake image card 缺少 src（图片不支持拷贝复制，请单独复制上传）" in warning
+        for snapshot in snapshots
+        for warning in snapshot.new_warnings
+    )
+    log_path = tmp_path / "测试库" / "export.log"
+    assert "Lake image card 缺少 src（图片不支持拷贝复制，请单独复制上传）" in log_path.read_text(encoding="utf-8")
+
+
+class LakeboardWarningClient(FakeClient):
+    def get_all_repo_docs(self, group_login: str, book_slug: str):
+        return [{"id": 41, "slug": "doc-lakeboard", "title": "思维导图文档"}]
+
+    def get_repo_toc(self, group_login: str, book_slug: str):
+        return {"data": [{"type": "DOC", "title": "思维导图文档", "doc_id": 41, "slug": "doc-lakeboard"}]}
+
+    def get_doc_detail(self, group_login: str, book_slug: str, doc_id_or_slug: str):
+        body_lake = (
+            '{"format":"lakeboard","type":"Board","diagramData":{"body":['
+            '{"type":"mindmap","html":"Root<br>","children":['
+            '{"html":"<a href=\\"https://example.com/a\\">Child A</a>","children":[]}'
+            ']}' 
+            ']}}'
+        )
+        return {"data": {"id": 41, "slug": "doc-lakeboard", "title": "思维导图文档", "format": "lakeboard", "body_lake": body_lake}}
+
+
+def test_export_repo_logs_and_emits_warning_for_lakeboard_document(tmp_path: Path) -> None:
+    snapshots: list[ProgressSnapshot] = []
+
+    def on_progress(snapshot: ProgressSnapshot) -> None:
+        snapshots.append(
+            ProgressSnapshot(
+                current_stage=snapshot.current_stage,
+                latest_warning=snapshot.latest_warning,
+                new_warnings=list(snapshot.new_warnings),
+            )
+        )
+
+    exporter = Exporter(LakeboardWarningClient(), progress_callback=on_progress)
+    repo = RepoRef(group_login="cyberangel", book_slug="rg9gdm")
+    options = ExportOptions(repo_input="cyberangel/rg9gdm", output_dir=tmp_path, request_interval=0)
+
+    result = exporter.export_repo(repo, options)
+
+    assert result.exported_docs == 1
+    assert any(
+        "检测到思维导图（lakeboard），已按 Markdown 列表降级导出" in warning
+        for snapshot in snapshots
+        for warning in snapshot.new_warnings
+    )
+    log_path = tmp_path / "测试库" / "export.log"
+    assert "检测到思维导图（lakeboard），已按 Markdown 列表降级导出" in log_path.read_text(encoding="utf-8")
+
+
 class FailingClient(FakeClient):
     def get_doc_detail(self, group_login: str, book_slug: str, doc_id_or_slug: str):
         raise RuntimeError("boom")

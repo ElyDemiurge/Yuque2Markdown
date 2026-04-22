@@ -150,6 +150,7 @@ class SessionState:
     token_status_message: str = ""  # Token 连接状态（刷新成功/失败/需刷新/限流）
     config_status_message: str = ""  # 配置更新提示（已更新输出目录等）
     network_test_message: str = ""  # 网络测试结果
+    cookie_source_label: str = ""  # 当前 Cookie 来源（配置文件 / 浏览器）
 
 
 def active_auth_value(config: AppConfig) -> str:

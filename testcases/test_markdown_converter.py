@@ -1,6 +1,7 @@
 """Lake 转 Markdown 测试。"""
 import json
 import sys
+import zlib
 sys.path.insert(0, ".")
 
 from core_modules.lake.resource_parser import collect_resources, extract_yuque_doc_slug, is_attachment_url, is_image_url, is_yuque_doc_url
@@ -53,6 +54,63 @@ def test_lake_image_card():
     assert "![test.png](https://example.com/pic.png)" in result.markdown
 
 
+def test_lake_image_card_falls_back_to_link_when_src_missing():
+    body_lake = (
+        '<card type="inline" name="image" '
+        'value="data:%7B%22src%22%3A%22%22%2C%22originalType%22%3A%22url%22%2C'
+        '%22link%22%3A%22https%3A%2F%2Fexample.com%2Fpic.png%22%2C%22title%22%3A%22fallback%22%7D"/>'
+    )
+    result = render_doc_markdown({"title": "测试", "format": "lake", "body_lake": body_lake})
+    assert "![fallback](https://example.com/pic.png)" in result.markdown
+    assert not any("Lake image card 缺少 src" in warning for warning in result.warnings)
+
+
+def test_lake_image_card_missing_src_with_copy_error_still_warns():
+    body_lake = (
+        '<card type="inline" name="image" '
+        'value="data:%7B%22src%22%3A%22%22%2C%22status%22%3A%22error%22%2C'
+        '%22message%22%3A%22%E5%9B%BE%E7%89%87%E4%B8%8D%E6%94%AF%E6%8C%81'
+        '%E6%8B%B7%E8%B4%9D%E5%A4%8D%E5%88%B6%EF%BC%8C%E8%AF%B7%E5%8D%95'
+        '%E7%8B%AC%E5%A4%8D%E5%88%B6%E4%B8%8A%E4%BC%A0%22%7D"/>'
+    )
+    result = render_doc_markdown({"title": "测试", "format": "lake", "body_lake": body_lake})
+    assert "（图片缺失）" in result.markdown
+    assert "Lake image card 缺少 src（图片不支持拷贝复制，请单独复制上传）" in result.warnings
+
+
+def test_lake_image_card_missing_src_keeps_named_placeholder():
+    body_lake = (
+        '<card type="inline" name="image" '
+        'value="data:%7B%22src%22%3A%22%22%2C%22originalType%22%3A%22binary%22%2C'
+        '%22name%22%3A%22image.png%22%2C%22status%22%3A%22pending%22%7D"/>'
+    )
+    result = render_doc_markdown({"title": "测试", "format": "lake", "body_lake": body_lake})
+    assert "（图片缺失：导出 image.png 时缺少 url）" in result.markdown
+    assert any("Lake image card 缺少 src" in warning for warning in result.warnings)
+
+
+def test_lake_image_card_missing_src_for_url_without_link_keeps_placeholder():
+    body_lake = (
+        '<card type="inline" name="image" '
+        'value="data:%7B%22src%22%3A%22%22%2C%22originalType%22%3A%22url%22%2C'
+        '%22status%22%3A%22pending%22%7D"/>'
+    )
+    result = render_doc_markdown({"title": "测试", "format": "lake", "body_lake": body_lake})
+    assert "（图片缺失：导出外链图片时缺少 url）" in result.markdown
+    assert any("Lake image card 缺少 src" in warning for warning in result.warnings)
+
+
+def test_lake_image_card_missing_src_for_url_with_error_message_keeps_placeholder():
+    body_lake = (
+        '<card type="inline" name="image" '
+        'value="data:%7B%22src%22%3A%22%22%2C%22originalType%22%3A%22url%22%2C'
+        '%22status%22%3A%22error%22%2C%22errorMessage%22%3A%22picture%20dump%20failure%22%7D"/>'
+    )
+    result = render_doc_markdown({"title": "测试", "format": "lake", "body_lake": body_lake})
+    assert "（图片缺失：导出外链图片时缺少 url，LakeErrorMessage=picture dump failure）" in result.markdown
+    assert any("Lake image card 缺少 src" in warning for warning in result.warnings)
+
+
 def test_lake_codeblock_card():
     body_lake = '<card type="inline" name="codeblock" value="data:%7B%22mode%22%3A%22python%22%2C%22code%22%3A%22print(%5C%22hello%5C%22)%22%7D"/>'
     result = render_doc_markdown({"title": "测试", "format": "lake", "body_lake": body_lake})
@@ -68,13 +126,13 @@ def test_lake_link():
 
 def test_lake_missing_body_lake_warns():
     result = render_doc_markdown({"title": "测试", "format": "lake", "body_lake": ""})
-    assert "文档正文为空" in result.warnings[0]
+    assert "接口未返回正文，请核对语雀原文以防文档丢失" in result.warnings[0]
 
 
 def test_lake_placeholder_only_warns_empty_instead_of_fallback():
     body_lake = '<!doctype lake><meta name="doc-version" content="1" /><p><cursor /><br /></p>'
     result = render_doc_markdown({"title": "测试", "format": "lake", "body_lake": body_lake, "content": body_lake})
-    assert any("文档正文为空或只包含占位内容" in warning for warning in result.warnings)
+    assert any("正文仅含空段落或占位节点，请核对语雀原文以防文档丢失" in warning for warning in result.warnings)
     assert not any("已回退到 content 字段" in warning for warning in result.warnings)
 
 
@@ -340,6 +398,60 @@ def test_lake_board_card():
     assert "  - Child 1" in result.markdown
     assert "![board](https://example.com/board.jpeg)" in result.markdown
     assert not any("未支持 card 类型" in w and "board" in w for w in result.warnings)
+
+
+def test_lakeboard_document_renders_outline_and_links():
+    body_lake = json.dumps(
+        {
+            "format": "lakeboard",
+            "type": "Board",
+            "diagramData": {
+                "body": [
+                    {
+                        "type": "mindmap",
+                        "html": "Root<br>",
+                        "children": [
+                            {"html": '<a href="https://example.com/a">Child A</a>', "children": []},
+                            {"html": "Child B", "children": []},
+                        ],
+                    }
+                ]
+            },
+        },
+        ensure_ascii=False,
+    )
+    result = render_doc_markdown({"title": "总览", "format": "lakeboard", "body_lake": body_lake})
+    assert "- Root" in result.markdown
+    assert "  - [Child A](https://example.com/a)" in result.markdown
+    assert "  - Child B" in result.markdown
+    assert "检测到思维导图（lakeboard），已按 Markdown 列表降级导出" in result.warnings
+    assert not any("解析失败" in w for w in result.warnings)
+    assert not any("文档正文为空" in w for w in result.warnings)
+
+
+def test_lakesheet_document_renders_markdown_table():
+    sheet_payload = [
+        {
+            "name": "Sheet1",
+            "data": {
+                "0": {"0": {"v": "姓名"}, "1": {"v": "电话"}},
+                "1": {"0": {"v": "张三"}, "1": {"v": "123456"}},
+                "2": {"0": {"v": "李四"}, "1": {"v": "654321"}},
+            },
+        }
+    ]
+    compressed = zlib.compress(json.dumps(sheet_payload, ensure_ascii=False).encode("utf-8")).decode("latin1")
+    body_lake = json.dumps(
+        {"format": "lakesheet", "version": "3.5.5", "sheet": compressed},
+        ensure_ascii=False,
+    )
+    result = render_doc_markdown({"title": "表格", "format": "lakesheet", "body_lake": body_lake})
+    assert "## Sheet1" in result.markdown
+    assert "| 姓名 | 电话 |" in result.markdown
+    assert "| 张三 | 123456 |" in result.markdown
+    assert "| 李四 | 654321 |" in result.markdown
+    assert not any("解析失败" in w for w in result.warnings)
+    assert not any("正文" in w for w in result.warnings)
 
 
 def test_lake_mention_card():

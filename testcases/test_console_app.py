@@ -67,6 +67,26 @@ def test_build_main_menu_items_shows_cookie_action_only_in_cookie_mode() -> None
     assert "token" not in keys
 
 
+def test_build_main_menu_items_shows_cookie_source_from_config() -> None:
+    config = AppConfig(auth_mode="cookie", cookie="demo-cookie")
+    session = SessionState(cookie_source_label="配置文件")
+
+    items = _build_main_menu_items(config, session, "暂无")
+    import_item = next(item for item in items if item.key == "import_cookie")
+
+    assert import_item.value == "已从配置文件加载"
+
+
+def test_build_main_menu_items_shows_cookie_source_from_browser() -> None:
+    config = AppConfig(auth_mode="cookie", cookie="demo-cookie")
+    session = SessionState(cookie_source_label="Chrome/Default")
+
+    items = _build_main_menu_items(config, session, "暂无")
+    import_item = next(item for item in items if item.key == "import_cookie")
+
+    assert import_item.value == "已从浏览器加载（Chrome/Default）"
+
+
 def test_build_connection_status_omits_empty_rate_limit() -> None:
     assert _build_connection_status("未配置 token", "暂无") == "连接状态: 未配置 token"
     assert _build_connection_status("Token 心跳正常", "X-RateLimit-Limit=500") == "[GREEN] 连接状态: Token 心跳正常 | X-RateLimit-Limit=500"
@@ -228,6 +248,25 @@ def test_run_console_app_imports_cookie_from_browser(monkeypatch) -> None:
     assert run_console_app() == 0
     assert config.auth_mode == "cookie"
     assert config.cookie == "yuque_ctoken=demo"
+
+
+def test_run_console_app_marks_cookie_as_loaded_from_config_on_startup(monkeypatch) -> None:
+    config = AppConfig(auth_mode="cookie", cookie="yuque_ctoken=demo")
+    captured: dict[str, object] = {}
+
+    def fake_load_config() -> AppConfig:
+        return config
+
+    def fake_run_menu(title, items, **kwargs):
+        captured["items"] = items
+        return "exit"
+
+    monkeypatch.setattr("core_modules.console.app.load_config", fake_load_config)
+    monkeypatch.setattr("core_modules.console.app.run_menu", fake_run_menu)
+
+    assert run_console_app() == 0
+    import_item = next(item for item in captured["items"] if item.key == "import_cookie")
+    assert import_item.value == "已从配置文件加载"
 
 
 def test_run_console_app_switching_to_cookie_imports_when_empty(monkeypatch) -> None:

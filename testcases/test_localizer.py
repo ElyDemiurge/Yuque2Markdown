@@ -134,6 +134,37 @@ def test_localize_assets_warns_on_failure():
 
     assert any("下载失败" in w for w in result.warnings)
     assert result.resources[0].failed is True
+    assert "https://example.com/pic.png" in result.markdown
+
+
+def test_localize_external_asset_failure_keeps_original_markdown_url():
+    render = MarkdownRenderResult(
+        markdown="![图](https://cdn.example.com/pic.png)",
+        resources=[
+            ResourceRef(
+                original_url="https://cdn.example.com/pic.png",
+                normalized_url="https://cdn.example.com/pic.png",
+                kind="image",
+                source_format="lake",
+            )
+        ],
+    )
+
+    def fake_fail(url):
+        raise RuntimeError("download failed")
+
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        assets_dir = Path(d) / "assets"
+        result = localize_markdown_assets(
+            render,
+            assets_dir=assets_dir,
+            fetch_binary=fake_fail,
+        )
+
+    assert "https://cdn.example.com/pic.png" in result.markdown
+    assert result.resources[0].local_path is None
+    assert result.resources[0].failed is True
 
 
 def test_external_asset_failure_is_not_critical():

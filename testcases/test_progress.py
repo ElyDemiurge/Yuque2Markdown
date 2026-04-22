@@ -80,6 +80,14 @@ def test_progress_ui_appends_all_new_warnings():
     assert [item[1] for item in ui.history] == ["warning 1", "warning 2"]
 
 
+def test_progress_ui_keeps_duplicate_new_warnings_in_history():
+    stream = DummyStream()
+    ui = ExportProgressUI(stream=stream)
+    snapshot = ProgressSnapshot(new_warnings=["warning 1", "warning 1"])
+    ui.update(snapshot)
+    assert [item[1] for item in ui.history] == ["warning 1", "warning 1"]
+
+
 def test_progress_ui_error_history():
     stream = DummyStream()
     ui = ExportProgressUI(stream=stream)
@@ -98,11 +106,11 @@ def test_progress_ui_keeps_full_history_when_unbounded():
     lines = ui._plain_history_lines(80)
     visible, label = ui._slice_history_lines(lines, 3)
     assert len(visible) == 3
-    assert label == "警告 1-3/8"
+    assert label == "警告 8 | 1-3/8"
     ui.history_scroll = 5
     visible, label = ui._slice_history_lines(lines, 3)
     assert visible[0].endswith("warning 5")
-    assert label == "警告 6-8/8"
+    assert label == "警告 8 | 6-8/8"
 
 
 def test_progress_ui_empty_section_uses_zero_range_label():
@@ -110,6 +118,16 @@ def test_progress_ui_empty_section_uses_zero_range_label():
     visible, label = ui._slice_section_lines("waiting_preview", ["  - 暂无"], 3)
     assert visible == ["  - 暂无", "", ""]
     assert label == "0-0/0"
+
+
+def test_progress_ui_history_label_shows_warning_and_error_counts():
+    ui = ExportProgressUI(stream=DummyStream())
+    ui.update(ProgressSnapshot(new_warnings=["warning 1", "warning 1"]))
+    ui.update(ProgressSnapshot(latest_error="error 1"))
+    lines = ui._plain_history_lines(80)
+    visible, label = ui._slice_history_lines(lines, 3)
+    assert visible[0].endswith("warning 1")
+    assert label == "警告 2 / 错误 1 | 1-3/3"
 
 
 def test_stage_color():

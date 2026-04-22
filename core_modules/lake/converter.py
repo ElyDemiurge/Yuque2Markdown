@@ -3,6 +3,7 @@ from __future__ import annotations
 import html
 import json
 import re
+import zlib
 from urllib.parse import unquote
 from xml.etree import ElementTree as ET
 
@@ -33,9 +34,9 @@ def render_doc_markdown(
             content = web_content
             warnings.append("文档未返回 lake 正文，已回退到 content 字段（可能丢失部分格式）")
         elif body_lake:
-            warnings.append("文档正文为空或只包含占位内容")
+            warnings.append("正文仅含空段落或占位节点，请核对语雀原文以防文档丢失")
         else:
-            warnings.append("文档正文为空")
+            warnings.append("接口未返回正文，请核对语雀原文以防文档丢失")
 
     content = maybe_prepend_title(content, title, prepend_title=prepend_title)
     resources = collect_resources(content, "lake", base_url=base_url)
@@ -80,6 +81,20 @@ def lake_to_markdown(doc_data: dict) -> tuple[str, list[str]]:
     if not body_lake:
         return "", warnings
 
+    board_content, board_warnings = _render_lakeboard_document(body_lake)
+    if board_content:
+        warnings.extend(board_warnings)
+        residual_warnings = _check_lake_conversion_completeness(board_content)
+        warnings.extend(residual_warnings)
+        return board_content, warnings
+
+    sheet_content, sheet_warnings = _render_lakesheet_document(body_lake)
+    if sheet_content:
+        warnings.extend(sheet_warnings)
+        residual_warnings = _check_lake_conversion_completeness(sheet_content)
+        warnings.extend(residual_warnings)
+        return sheet_content, warnings
+
     content, parse_warnings = _render_lake_document(body_lake)
     warnings.extend(parse_warnings)
 
@@ -120,6 +135,54 @@ def _render_lake_document(text: str) -> tuple[str, list[str]]:
     return content.strip(), warnings
 
 
+def _render_lakeboard_document(text: str) -> tuple[str, list[str]]:
+    """转换顶层 lakeboard JSON 文档。"""
+    stripped = text.strip()
+    if not stripped.startswith("{"):
+        return "", []
+    try:
+        payload = json.loads(stripped)
+    except Exception:
+        return "", []
+    if not isinstance(payload, dict):
+        return "", []
+    if str(payload.get("format") or "").strip().lower() != "lakeboard":
+        return "", []
+    if str(payload.get("type") or "").strip().lower() != "board":
+        return "", []
+    content = _render_lake_board(payload)
+    warnings: list[str] = []
+    if content.strip():
+        warnings.append("检测到思维导图（lakeboard），已按 Markdown 列表降级导出")
+    return content.strip(), warnings
+
+
+def _render_lakesheet_document(text: str) -> tuple[str, list[str]]:
+    """转换顶层 lakesheet JSON 文档。"""
+    stripped = text.strip()
+    if not stripped.startswith("{"):
+        return "", []
+    try:
+        payload = json.loads(stripped)
+    except Exception:
+        return "", []
+    if not isinstance(payload, dict):
+        return "", []
+    if str(payload.get("format") or "").strip().lower() != "lakesheet":
+        return "", []
+    raw_sheet = payload.get("sheet")
+    if not isinstance(raw_sheet, str) or not raw_sheet:
+        return "", ["检测到电子表格（lakesheet），但缺少可解析的 sheet 数据"]
+    try:
+        sheet_bytes = raw_sheet.encode("latin1")
+        decoded = zlib.decompress(sheet_bytes).decode("utf-8")
+        sheets = json.loads(decoded)
+    except Exception:
+        return "", ["检测到电子表格（lakesheet），但 sheet 数据解压失败"]
+    content = _render_lakesheet_tables(sheets)
+    return content.strip(), []
+
+
 def _render_lake_block(element: ET.Element, *, warnings: list[str], list_indent: int = 0) -> str:
     tag = _lake_tag_name(element)
     if tag in {"h1", "h2", "h3", "h4", "h5", "h6"}:
@@ -129,6 +192,8 @@ def _render_lake_block(element: ET.Element, *, warnings: list[str], list_indent:
         level = original_level + 1
         text = _render_lake_inline(element, warnings=warnings).strip()
         if level > 6:
+            # 约定：超出 Markdown H6 能力范围时，不丢弃标题文本，也不继续输出非法标题级别；
+            # 保留一条 warning，并将该标题降级为无序列表。这是有意保留的兼容行为。
             warnings.append(f'标题层级超出 H6 最大限制："{text}"（原 h{original_level} → h{level}，已改为无序列表）')
             return f"- {text}" if text else ""
         return f"{'#' * level} {text}" if text else ""
@@ -363,10 +428,17 @@ def _render_lake_card(element: ET.Element, *, warnings: list[str]) -> str:
 
     if name == "image":
         src = str(payload.get("src") or "").strip()
+        if not src:
+            original_type = str(payload.get("originalType") or "").strip().lower()
+            link = str(payload.get("link") or "").strip()
+            if original_type == "url" and link:
+                src = link
         alt = str(payload.get("name") or payload.get("title") or "").strip()
         if not src:
-            warnings.append("Lake image card 缺少 src")
-            return ""
+            message = str(payload.get("message") or "").strip()
+            suffix = f"（{message}）" if message else ""
+            warnings.append(f"Lake image card 缺少 src{suffix}")
+            return _render_missing_image_placeholder(payload, alt)
         return f"![{alt}]({src})"
 
     if name == "codeblock":
@@ -733,7 +805,120 @@ def _render_board_outline(nodes: list[dict], depth: int = 0) -> str:
 
 def _normalize_board_text(value: object) -> str:
     """清洗 board 节点文本。"""
-    text = html.unescape(str(value or ""))
+    text = str(value or "")
+    text = re.sub(r"<br\s*/?>", " ", text, flags=re.I)
+
+    def _replace_link(match: re.Match[str]) -> str:
+        href = html.unescape((match.group(1) or "").strip())
+        label = re.sub(r"<[^>]+>", "", match.group(2) or "")
+        label = html.unescape(label).strip()
+        if href:
+            return f"[{label or href}]({href})"
+        return label
+
+    text = re.sub(
+        r'<a\b[^>]*href="([^"]*)"[^>]*>(.*?)</a>',
+        _replace_link,
+        text,
+        flags=re.I | re.S,
+    )
+    text = html.unescape(text)
     text = re.sub(r"<[^>]+>", "", text)
     text = text.replace("\u200b", "").strip()
+    text = re.sub(r"\s+", " ", text)
+    return text
+
+
+def _render_missing_image_placeholder(payload: dict, alt: str) -> str:
+    """为无法恢复的图片卡保留一个可见占位，避免正文内容直接断掉。"""
+    name = str(payload.get("name") or "").strip()
+    original_type = str(payload.get("originalType") or "").strip().lower()
+    error_message = str(payload.get("errorMessage") or "").strip()
+    if original_type == "binary":
+        return f"（图片缺失：导出 {name or '该图片'} 时缺少 url）"
+    if original_type == "url":
+        detail = f"，LakeErrorMessage={error_message}" if error_message else ""
+        return f"（图片缺失：导出外链图片时缺少 url{detail}）"
+    label = alt.strip()
+    if label:
+        return f"（图片缺失：{label}）"
+    return "（图片缺失）"
+
+
+def _render_lakesheet_tables(sheets: object) -> str:
+    """将 lakesheet 数据降级为 Markdown 表格。"""
+    if not isinstance(sheets, list):
+        return ""
+    parts: list[str] = []
+    for sheet in sheets:
+        if not isinstance(sheet, dict):
+            continue
+        table = _render_lakesheet_table(sheet)
+        if not table:
+            continue
+        name = str(sheet.get("name") or "").strip()
+        if name:
+            parts.append(f"## {name}\n\n{table}")
+        else:
+            parts.append(table)
+    return "\n\n".join(parts)
+
+
+def _render_lakesheet_table(sheet: dict) -> str:
+    data = sheet.get("data")
+    if not isinstance(data, dict) or not data:
+        return ""
+    row_keys = sorted((int(k) for k in data.keys() if str(k).isdigit()))
+    if not row_keys:
+        return ""
+    rows: list[list[str]] = []
+    max_col = -1
+    for row_key in row_keys:
+        row_data = data.get(str(row_key), {})
+        if not isinstance(row_data, dict):
+            continue
+        for col_key in row_data.keys():
+            if str(col_key).isdigit():
+                max_col = max(max_col, int(col_key))
+    if max_col < 0:
+        return ""
+
+    for row_key in row_keys:
+        row_data = data.get(str(row_key), {})
+        rendered_row: list[str] = []
+        has_content = False
+        for col in range(max_col + 1):
+            cell = row_data.get(str(col), {}) if isinstance(row_data, dict) else {}
+            value = _extract_lakesheet_cell_text(cell)
+            rendered_row.append(value)
+            if value:
+                has_content = True
+        if has_content:
+            rows.append(rendered_row)
+    if not rows:
+        return ""
+
+    header = rows[0]
+    width = len(header)
+    normalized_rows = [row + [""] * (width - len(row)) for row in rows]
+    lines = [
+        "| " + " | ".join(header) + " |",
+        "| " + " | ".join(["---"] * width) + " |",
+    ]
+    for row in normalized_rows[1:]:
+        lines.append("| " + " | ".join(row[:width]) + " |")
+    return "\n".join(lines)
+
+
+def _extract_lakesheet_cell_text(cell: object) -> str:
+    if not isinstance(cell, dict):
+        return ""
+    value = cell.get("v")
+    if value is None:
+        value = cell.get("m")
+    text = str(value or "").strip()
+    text = html.unescape(text)
+    text = text.replace("\r\n", " ").replace("\n", " ").replace("\r", " ")
+    text = re.sub(r"\s+", " ", text)
+    text = text.replace("|", "\\|")
     return text

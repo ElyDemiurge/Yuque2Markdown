@@ -43,6 +43,8 @@ def run_console_app() -> int:
     if credential:
         config.token = (config.token or "").strip()
         config.cookie = (config.cookie or "").strip()
+        if config.cookie:
+            session.cookie_source_label = "配置文件"
         session.token_status_message = f"已加载 {auth_mode_label(config.auth_mode)}，请刷新连接状态"
     else:
         session.token_status_message = f"未设置 {auth_mode_label(config.auth_mode)}"
@@ -120,6 +122,7 @@ def run_console_app() -> int:
                     if result.ok:
                         config.cookie = result.cookie
                         config.persist_cookie = True
+                        session.cookie_source_label = result.source or "浏览器"
                         session.token_status_message = f"{result.message}，请刷新连接状态"
                         _append_console_event("自动加载 Cookie 成功", 登录方式=new_mode, 知识库=session.repo_input or "-", 来源=result.source or "-", 说明=result.message)
                     else:
@@ -155,6 +158,7 @@ def run_console_app() -> int:
                 config.auth_mode = AUTH_MODE_COOKIE
                 config.cookie = result.cookie
                 config.persist_cookie = True
+                session.cookie_source_label = result.source or "浏览器"
                 session.connection_ok = False
                 session.current_user_label = "未检查"
                 session.last_error_text = ""
@@ -173,6 +177,7 @@ def run_console_app() -> int:
         if key == "clear_token":
             config.token = ""
             config.cookie = ""
+            session.cookie_source_label = ""
             session.current_user_label = "未检查"
             session.token_status_message = "登录凭据已清空"
             session.connection_ok = False
@@ -336,7 +341,15 @@ def _build_main_menu_items(config: AppConfig, session: SessionState, rate_limit_
     if auth_mode == AUTH_MODE_TOKEN:
         items.insert(3, MenuItem("token", "设置 Token", _mask_token(config.token) if has_token else "未设置", input_style=True, edit_value=config.token or ""))
     else:
-        items.insert(3, MenuItem("import_cookie", "从浏览器或配置文件加载 Cookie", "已加载" if has_cookie else "未加载", item_type="action"))
+        items.insert(
+            3,
+            MenuItem(
+                "import_cookie",
+                "Cookie",
+                _build_cookie_load_text(session, has_cookie),
+                item_type="action",
+            ),
+        )
     if session.connection_ok:
         repo_display = session.repo_namespace or session.repo_input or config.last_repo_input
         items.extend(
@@ -362,6 +375,17 @@ def _build_main_menu_items(config: AppConfig, session: SessionState, rate_limit_
         items.append(MenuItem("start_export", "开始导出"))
     items.append(MenuItem("exit", "退出"))
     return items
+
+
+def _build_cookie_load_text(session: SessionState, has_cookie: bool) -> str:
+    if not has_cookie:
+        return "未加载"
+    source = (session.cookie_source_label or "").strip()
+    if not source:
+        return "已加载"
+    if source == "配置文件":
+        return "已从配置文件加载"
+    return f"已从浏览器加载（{source}）"
 
 
 def _run_advanced_settings_menu(config: AppConfig, session: SessionState) -> bool:

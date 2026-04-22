@@ -155,9 +155,8 @@ class ExportProgressUI:
     def _append_history(self, snapshot: ProgressSnapshot) -> None:
         if snapshot.new_warnings:
             for warning in snapshot.new_warnings:
-                if warning != self._last_warning:
-                    self.history.append(("WARN", warning))
-                    self._last_warning = warning
+                self.history.append(("WARN", warning))
+                self._last_warning = warning
         elif snapshot.latest_warning and snapshot.latest_warning != self._last_warning:
             self.history.append(("WARN", snapshot.latest_warning))
             self._last_warning = snapshot.latest_warning
@@ -266,7 +265,7 @@ class ExportProgressUI:
         lines.extend(
             [
                 (left, sep),
-                (left, self._section_header("警告/异常")),
+                (left, self._section_header("警告/错误")),
             ]
         )
         for line in self._format_history_ansi(content_width):
@@ -372,7 +371,7 @@ class ExportProgressUI:
                     ("waiting_preview", "等待队列", self._plain_list(waiting_titles, "暂无", limit=None), "waiting"),
                 ]
             )
-        scroll_sections.append(("history", "警告/异常", self._plain_history_lines(content_width), "warning"))
+        scroll_sections.append(("history", "警告/错误", self._plain_history_lines(content_width), "warning"))
 
         footer_lines = self._build_footer_lines(snapshot)
         footer_block_rows = len(footer_lines)
@@ -547,7 +546,15 @@ class ExportProgressUI:
 
     def _slice_history_lines(self, lines: list[str], visible_rows: int) -> tuple[list[str], str]:
         visible, label = self._slice_section_lines("history", lines, visible_rows)
-        return visible, f"警告 {label}"
+        warning_count = sum(1 for level, _message in self.history if level == "WARN")
+        error_count = sum(1 for level, _message in self.history if level == "ERROR")
+        count_parts: list[str] = []
+        if warning_count > 0:
+            count_parts.append(f"警告 {warning_count}")
+        if error_count > 0:
+            count_parts.append(f"错误 {error_count}")
+        prefix = " / ".join(count_parts) if count_parts else "警告 0 / 错误 0"
+        return visible, f"{prefix} | {label}"
 
     def _build_footer_lines(self, snapshot: ProgressSnapshot) -> list[tuple[str, int]]:
         lines: list[tuple[str, int]] = []
