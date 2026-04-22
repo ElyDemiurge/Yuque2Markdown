@@ -17,6 +17,7 @@ from core_modules.console.app import (
     _refresh_connection_state,
     run_console_app,
 )
+from core_modules.export.models import ExportResult, RepoRef
 
 
 def test_build_main_menu_items_hides_repo_actions_when_connection_invalid() -> None:
@@ -74,7 +75,7 @@ def test_build_main_menu_items_shows_cookie_source_from_config() -> None:
     items = _build_main_menu_items(config, session, "暂无")
     import_item = next(item for item in items if item.key == "import_cookie")
 
-    assert import_item.value == "已从配置文件加载"
+    assert import_item.value == "已从配置文件加载，可从浏览器重新读取"
 
 
 def test_build_main_menu_items_shows_cookie_source_from_browser() -> None:
@@ -84,7 +85,7 @@ def test_build_main_menu_items_shows_cookie_source_from_browser() -> None:
     items = _build_main_menu_items(config, session, "暂无")
     import_item = next(item for item in items if item.key == "import_cookie")
 
-    assert import_item.value == "已从浏览器加载（Chrome/Default）"
+    assert import_item.value == "已从浏览器加载（Chrome/Default），可重新读取"
 
 
 def test_build_connection_status_omits_empty_rate_limit() -> None:
@@ -219,6 +220,25 @@ def test_run_console_app_handles_refresh_rate_limit_without_crashing(monkeypatch
     assert run_console_app() == 0
 
 
+def test_build_result_lines_uses_total_elapsed_and_omits_config_save() -> None:
+    config = AppConfig()
+    session = SessionState(repo_display_name="Android逆向学习", selected_doc_ids={1})
+    result = ExportResult(
+        repo=RepoRef(group_login="demo", book_slug="android", name="Android逆向学习"),
+        exported_docs=1,
+        skipped_docs=0,
+        failed_docs=0,
+        rewritten_links=0,
+        total_downloaded=2,
+        elapsed_seconds=31.3,
+    )
+
+    lines = _build_result_lines(config, session, result)
+
+    assert "总耗时: 31.3 秒" in lines
+    assert not any(line.startswith("配置保存:") for line in lines)
+
+
 def test_run_console_app_imports_cookie_from_browser(monkeypatch) -> None:
     config = AppConfig()
     calls = {"count": 0}
@@ -266,7 +286,7 @@ def test_run_console_app_marks_cookie_as_loaded_from_config_on_startup(monkeypat
 
     assert run_console_app() == 0
     import_item = next(item for item in captured["items"] if item.key == "import_cookie")
-    assert import_item.value == "已从配置文件加载"
+    assert import_item.value == "已从配置文件加载，可从浏览器重新读取"
 
 
 def test_run_console_app_switching_to_cookie_imports_when_empty(monkeypatch) -> None:
@@ -293,6 +313,124 @@ def test_run_console_app_switching_to_cookie_imports_when_empty(monkeypatch) -> 
     assert run_console_app() == 0
     assert config.auth_mode == "cookie"
     assert config.cookie == "yuque_ctoken=demo"
+
+
+def test_run_console_app_switching_cookie_to_token_keeps_focus_on_auth_mode(monkeypatch) -> None:
+    config = AppConfig(auth_mode="cookie", cookie="yuque_ctoken=demo")
+    calls = {"count": 0}
+    captured_initial_indexes: list[int] = []
+    captured_items: list[list] = []
+
+    def fake_load_config() -> AppConfig:
+        return config
+
+    def fake_run_menu(title, items, **kwargs):
+        captured_items.append(items)
+        captured_initial_indexes.append(kwargs.get("initial_index", 0))
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return "refresh_connection"
+        if calls["count"] == 2:
+            return "auth_mode_token"
+        return "exit"
+
+    monkeypatch.setattr("core_modules.console.app.load_config", fake_load_config)
+    monkeypatch.setattr("core_modules.console.app.run_menu", fake_run_menu)
+    monkeypatch.setattr("core_modules.console.app._refresh_connection_state", lambda *args, **kwargs: None)
+    monkeypatch.setattr("core_modules.console.app._persist_config", lambda cfg, session, reason: cfg)
+
+    assert run_console_app() == 0
+    assert config.auth_mode == "token"
+    auth_index = next(index for index, item in enumerate(captured_items[2]) if item.key == "auth_mode")
+    assert captured_initial_indexes[2] == auth_index
+
+
+def test_run_console_app_switching_token_to_cookie_keeps_focus_on_auth_mode(monkeypatch) -> None:
+    config = AppConfig(token="demo-token")
+    calls = {"count": 0}
+    captured_initial_indexes: list[int] = []
+    captured_items: list[list] = []
+
+    def fake_load_config() -> AppConfig:
+        return config
+
+    def fake_run_menu(title, items, **kwargs):
+        captured_items.append(items)
+        captured_initial_indexes.append(kwargs.get("initial_index", 0))
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return "refresh_connection"
+        if calls["count"] == 2:
+            return "auth_mode_cookie"
+        return "exit"
+
+    monkeypatch.setattr("core_modules.console.app.load_config", fake_load_config)
+    monkeypatch.setattr("core_modules.console.app.run_menu", fake_run_menu)
+    monkeypatch.setattr(
+        "core_modules.console.app.load_yuque_cookie_from_browsers",
+        lambda: BrowserCookieResult("yuque_ctoken=demo", "Chrome/Default", "已加载"),
+    )
+    monkeypatch.setattr("core_modules.console.app._refresh_connection_state", lambda *args, **kwargs: None)
+    monkeypatch.setattr("core_modules.console.app._persist_config", lambda cfg, session, reason: cfg)
+
+    assert run_console_app() == 0
+    assert config.auth_mode == "cookie"
+    auth_index = next(index for index, item in enumerate(captured_items[2]) if item.key == "auth_mode")
+    assert captured_initial_indexes[2] == auth_index
+
+
+def test_run_console_app_clear_token_clears_repo_context(monkeypatch) -> None:
+    config = AppConfig(token="demo-token", cookie="yuque_ctoken=demo")
+    calls = {"count": 0}
+    captured_sessions: list[SessionState] = []
+
+    def fake_load_config() -> AppConfig:
+        return config
+
+    def fake_run_menu(title, items, **kwargs):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return "clear_token"
+        return "exit"
+
+    def fake_persist_config(cfg, session, reason):
+        if reason == "token_cleared":
+            captured_sessions.append(session)
+        return cfg
+
+    monkeypatch.setattr("core_modules.console.app.load_config", fake_load_config)
+    monkeypatch.setattr("core_modules.console.app.run_menu", fake_run_menu)
+    monkeypatch.setattr("core_modules.console.app._persist_config", fake_persist_config)
+
+    original_session_state = __import__("core_modules.console.app", fromlist=["SessionState"]).SessionState
+
+    class PreparedSessionState(original_session_state):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.connection_ok = True
+            self.current_user_login = "cyberangel"
+            self.repo_input = "group/repo"
+            self.repo_display_name = "测试库"
+            self.repo_namespace = "group/repo"
+            self.repo_url = "https://www.yuque.com/group/repo"
+            self.repo_filter = "repo"
+            self.repo_list_index = 3
+            self.selected_doc_ids = {1, 2}
+            self.selected_doc_count = 2
+
+    monkeypatch.setattr("core_modules.console.app.SessionState", PreparedSessionState)
+
+    assert run_console_app() == 0
+    cleared = captured_sessions[0]
+    assert cleared.current_user_login == ""
+    assert cleared.repo_input == ""
+    assert cleared.repo_display_name == ""
+    assert cleared.repo_namespace == ""
+    assert cleared.repo_url == ""
+    assert cleared.repo_filter == ""
+    assert cleared.repo_list_index == 0
+    assert cleared.selected_doc_ids is None
+    assert cleared.selected_doc_count == 0
 
 
 def test_build_confirmation_lines_include_sections() -> None:

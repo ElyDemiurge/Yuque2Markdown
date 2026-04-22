@@ -1,3 +1,3 @@
 """项目版本信息。"""
 
-APP_VERSION = "v0.4.1"
+APP_VERSION = "v0.4.2"

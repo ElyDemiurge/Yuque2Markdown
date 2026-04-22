@@ -4,8 +4,12 @@ import curses
 from dataclasses import dataclass, field
 
 from core_modules.console.menu import (
+    _apply_text_edit_key,
     _draw_text,
     _display_width,
+    _enable_keypad,
+    _filter_cursor_x,
+    _is_escape_key,
     _is_screen_too_small,
     _layout_frame,
     _render_framed_header,
@@ -34,7 +38,7 @@ class _SelectorState:
     filter_text: str = ""
 
 
-HELP_LINE_1 = "↑↓ 移动 | ←→ 展开/折叠 | Space 切换 | Enter 确认 | / 过滤 | q 返回"
+HELP_LINE_1 = "↑↓ 移动 | ←→ 展开/折叠 | Space 切换 | Enter 确认 | / 过滤 | Esc 返回"
 HELP_LINE_2 = "a 全选可见文档 | n 清空选择 | PgUp/PgDn 翻页 | Esc 清空过滤"
 
 
@@ -47,6 +51,7 @@ def select_doc_ids(nodes: list[TocNode], initial_selected: set[int] | None = Non
     _refresh_items(state)
 
     def run(stdscr) -> set[int]:
+        _enable_keypad(stdscr)
         curses.curs_set(0)
         while True:
             height, width = stdscr.getmaxyx()
@@ -54,7 +59,7 @@ def select_doc_ids(nodes: list[TocNode], initial_selected: set[int] | None = Non
                 _render_screen_too_small(stdscr, title="选择文档", height=height, width=width)
                 stdscr.refresh()
                 key = stdscr.get_wch()
-                if key == "q":
+                if key == "\x1b":
                     return state.selected
                 continue
             _render(stdscr, state)
@@ -85,7 +90,7 @@ def select_doc_ids(nodes: list[TocNode], initial_selected: set[int] | None = Non
                 _prompt_filter(stdscr, state)
             elif key in ("\n", "\r"):
                 return state.selected
-            elif key == "q":
+            elif key == "\x1b":
                 return state.selected
 
     return curses.wrapper(run)
@@ -118,14 +123,33 @@ def _refresh_items(state: _SelectorState) -> None:
     state.index = min(state.index, len(state.items) - 1)
 
 
+def _flatten_subtree(nodes: list[TocNode], expanded_keys: set[str], depth: int = 0) -> list[_MenuItem]:
+    items: list[_MenuItem] = []
+    for node in nodes:
+        key = _node_key(node)
+        expanded = bool(node.children)
+        items.append(_MenuItem(key=key, node=node, depth=depth, expanded=expanded))
+        if node.children:
+            items.extend(_flatten_subtree(node.children, expanded_keys, depth + 1))
+    return items
+
+
 def _flatten_visible(nodes: list[TocNode], expanded_keys: set[str], depth: int = 0, filter_text: str = "") -> list[_MenuItem]:
     items: list[_MenuItem] = []
     query = filter_text.lower().strip()
     for node in nodes:
         key = _node_key(node)
-        expanded = key in expanded_keys
-        children_items = _flatten_visible(node.children, expanded_keys, depth + 1, filter_text=filter_text) if node.children and expanded else []
         matches_self = not query or query in node.title.lower() or (node.slug and query in node.slug.lower())
+        expanded = key in expanded_keys
+        if not query:
+            children_items = _flatten_visible(node.children, expanded_keys, depth + 1, filter_text=filter_text) if node.children and expanded else []
+        elif matches_self and node.children:
+            children_items = _flatten_subtree(node.children, expanded_keys, depth + 1)
+            expanded = True
+        else:
+            children_items = _flatten_visible(node.children, expanded_keys, depth + 1, filter_text=filter_text) if node.children else []
+            if children_items:
+                expanded = True
         if query and not matches_self and not children_items:
             continue
         items.append(_MenuItem(key=key, node=node, depth=depth, expanded=expanded))
@@ -350,11 +374,27 @@ def _select_all(state: _SelectorState) -> None:
         state.selected.update(_collect_doc_ids(item.node))
 
 
+def _set_filter_text(state: _SelectorState, text: str) -> None:
+    normalized = text.strip()
+    if state.filter_text == normalized:
+        return
+    state.filter_text = normalized
+    _refresh_items(state)
+
+
+def _render_filter_prompt(stdscr, *, left: int, height: int, content_width: int, chars: list[str], cursor: int) -> None:
+    prompt = f"过滤: {''.join(chars)}"
+    _draw_text(stdscr, height - 1, left, " " * max(0, content_width), width=content_width, attrs=curses.A_DIM)
+    _draw_text(stdscr, height - 1, left, prompt, width=content_width, attrs=curses.A_DIM)
+    stdscr.move(height - 1, _filter_cursor_x(left, content_width, chars, cursor))
+
+
 def _prompt_filter(stdscr, state: _SelectorState) -> None:
     chars = list(state.filter_text)
     cursor = len(chars)
-    curses.curs_set(1)
+    _enable_keypad(stdscr)
     while True:
+        curses.curs_set(1)
         _render(stdscr, state)
         height, width = stdscr.getmaxyx()
         content_width, left, _top, _divider_row = _layout_frame(
@@ -365,35 +405,16 @@ def _prompt_filter(stdscr, state: _SelectorState) -> None:
             None,
             [],
         )
-        prompt = f"过滤: {''.join(chars)}"
-        _draw_text(stdscr, height - 1, left, prompt, width=content_width, attrs=curses.A_DIM)
-        stdscr.move(height - 1, min(left + len("过滤: ") + cursor, max(left, left + content_width - 1)))
+        _render_filter_prompt(stdscr, left=left, height=height, content_width=content_width, chars=chars, cursor=cursor)
         key = stdscr.get_wch()
         if key in ("\n", "\r"):
-            state.filter_text = "".join(chars).strip()
-            _refresh_items(state)
+            _set_filter_text(state, "".join(chars))
             curses.curs_set(0)
             return
-        if key == "\x1b":
-            state.filter_text = ""
-            _refresh_items(state)
+        if _is_escape_key(key):
+            _set_filter_text(state, "")
             curses.curs_set(0)
             return
-        if key in (curses.KEY_BACKSPACE, "\b", "\x7f"):
-            if cursor > 0:
-                del chars[cursor - 1]
-                cursor -= 1
-            continue
-        if key == curses.KEY_DC:
-            if cursor < len(chars):
-                del chars[cursor]
-            continue
-        if key == curses.KEY_LEFT:
-            cursor = max(0, cursor - 1)
-            continue
-        if key == curses.KEY_RIGHT:
-            cursor = min(len(chars), cursor + 1)
-            continue
-        if isinstance(key, str) and key.isprintable():
-            chars.insert(cursor, key)
-            cursor += 1
+        chars, cursor, handled = _apply_text_edit_key(key, chars, cursor)
+        if handled:
+            _set_filter_text(state, "".join(chars))

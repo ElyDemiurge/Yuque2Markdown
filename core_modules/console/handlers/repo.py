@@ -164,16 +164,27 @@ def handle_doc_selection(
         append_console_log("文档选择失败: 原因=未选择知识库")
         show_message("缺少知识库", ["请先手动输入知识库，或从列表选择知识库。"])
         return rate_limit_summary, False
-    client = build_client_from_config(config, credential)
-    _, toc_tree = fetch_repo_toc(client, session.repo_input)
-    summary_lines = [
-        f"知识库: {session.repo_display_name or session.repo_namespace or session.repo_input}",
-        f"当前选择: {build_selected_docs_text(session)}",
-    ]
-    selected = select_doc_ids(toc_tree, initial_selected=session.selected_doc_ids, summary_lines=summary_lines)
+    client = None
+    try:
+        client = build_client_from_config(config, credential)
+        _, toc_tree = fetch_repo_toc(client, session.repo_input)
+        summary_lines = [
+            f"知识库: {session.repo_display_name or session.repo_namespace or session.repo_input}",
+            f"当前选择: {build_selected_docs_text(session)}",
+        ]
+        selected = select_doc_ids(toc_tree, initial_selected=session.selected_doc_ids, summary_lines=summary_lines)
+    except Exception as exc:  # noqa: BLE001
+        session.status_message = f"文档选择失败: {exc}"
+        session.last_error_text = str(exc)
+        append_console_log(f"文档选择失败: 知识库={session.repo_input} 错误={exc}")
+        show_message("文档选择失败", [str(exc)])
+        if client is not None:
+            return format_rate_limit(getattr(client, "last_rate_limit", {}) or {}), False
+        return rate_limit_summary, False
     session.selected_doc_ids = selected if selected else None
     session.selected_doc_count = len(selected) if selected else count_docs(toc_tree)
     session.status_message = f"文档选择已更新: {'已选 ' + str(len(selected)) + ' 篇' if selected else '全部文档'}"
+    session.last_error_text = ""
     session.dirty = True
     append_console_log(f"文档选择成功: 知识库={session.repo_input} 已选={len(selected)} 总数={count_docs(toc_tree)}")
     return format_rate_limit(client.last_rate_limit), True

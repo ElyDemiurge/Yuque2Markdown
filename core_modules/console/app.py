@@ -179,11 +179,17 @@ def run_console_app() -> int:
             config.cookie = ""
             session.cookie_source_label = ""
             session.current_user_label = "未检查"
+            session.current_user_login = ""
             session.token_status_message = "登录凭据已清空"
             session.connection_ok = False
+            session.repo_input = ""
             session.repo_display_name = ""
             session.repo_namespace = ""
             session.repo_url = ""
+            session.repo_filter = ""
+            session.repo_list_index = 0
+            session.selected_doc_ids = None
+            session.selected_doc_count = 0
             repos = []
             rate_limit_summary = "暂无"
             session.dirty = True
@@ -379,13 +385,13 @@ def _build_main_menu_items(config: AppConfig, session: SessionState, rate_limit_
 
 def _build_cookie_load_text(session: SessionState, has_cookie: bool) -> str:
     if not has_cookie:
-        return "未加载"
+        return "未加载，可从浏览器读取"
     source = (session.cookie_source_label or "").strip()
     if not source:
-        return "已加载"
+        return "已加载，可从浏览器重新读取"
     if source == "配置文件":
-        return "已从配置文件加载"
-    return f"已从浏览器加载（{source}）"
+        return "已从配置文件加载，可从浏览器重新读取"
+    return f"已从浏览器加载（{source}），可重新读取"
 
 
 def _run_advanced_settings_menu(config: AppConfig, session: SessionState) -> bool:

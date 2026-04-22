@@ -63,6 +63,21 @@ def test_progress_ui_finish_keeps_completion_lines_in_output():
     assert "返回" in content
 
 
+def test_progress_ui_finish_uses_same_section_layout():
+    stream = DummyStream()
+    ui = ExportProgressUI(stream=stream)
+    ui.completion_lines = ["[导出结果]", "成功: 2 | 失败: 0"]
+    snapshot = ProgressSnapshot(total_docs=2, processed_docs=2, current_stage="已完成")
+    ui.finish(snapshot)
+    content = stream.getvalue()
+    assert "── 导出结果 ──" in content
+    assert "── 已完成 ── 0-0/0" in content
+    assert "── 失败 ── 0-0/0" in content
+    assert "── 等待队列 ── 0-0/0" in content
+    assert "── 警告/错误 ── 0-0/0" in content
+    assert "[导出结果]" not in content
+
+
 def test_progress_ui_warning_history():
     stream = DummyStream()
     ui = ExportProgressUI(stream=stream)
@@ -125,9 +140,29 @@ def test_progress_ui_history_label_shows_warning_and_error_counts():
     ui.update(ProgressSnapshot(new_warnings=["warning 1", "warning 1"]))
     ui.update(ProgressSnapshot(latest_error="error 1"))
     lines = ui._plain_history_lines(80)
-    visible, label = ui._slice_history_lines(lines, 3)
+    visible, label = ui._slice_display_lines("history", lines, 3)
     assert visible[0].endswith("warning 1")
     assert label == "警告 2 / 错误 1 | 1-3/3"
+
+
+def test_progress_ui_empty_history_label_uses_zero_range_only():
+    ui = ExportProgressUI(stream=DummyStream())
+    lines = ui._plain_history_lines(80)
+    visible, label = ui._slice_display_lines("history", lines, 3)
+    assert visible == ["  - 暂无", "", ""]
+    assert label == "0-0/0"
+
+
+def test_progress_ui_finished_focus_can_move_to_return():
+    ui = ExportProgressUI(stream=DummyStream())
+    ui._finished = True
+    snapshot = ProgressSnapshot(current_stage="已完成")
+    for _ in range(4):
+        ui._move_focus(snapshot, 1)
+    assert ui.section_focus == 4
+    assert ui._is_return_focused(snapshot) is True
+    ui._scroll_active_section(snapshot, 1)
+    assert ui.section_scrolls["history"] == 0
 
 
 def test_stage_color():

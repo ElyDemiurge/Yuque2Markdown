@@ -123,7 +123,7 @@ def build_result_lines(config: AppConfig, session: SessionState, result, *, buil
         f"成功: {result.exported_docs} | 跳过: {result.skipped_docs} | 失败: {result.failed_docs}",
     ]
     if result.elapsed_seconds is not None:
-        lines.append(f"耗时: {result.elapsed_seconds:.1f} 秒")
+        lines.append(f"总耗时: {result.elapsed_seconds:.1f} 秒")
     lines.append(f"改写内部链接: {result.rewritten_links}")
     if result.total_warnings > 0:
         lines.append(f"总警告数: {result.total_warnings}")
@@ -137,7 +137,6 @@ def build_result_lines(config: AppConfig, session: SessionState, result, *, buil
     if result.failed_items:
         lines.append("[失败项预览]")
         lines.extend(f"- {item}" for item in result.failed_items[:5])
-    lines.append("配置保存: 已自动保存" if config.ui_preferences.auto_save_after_export else "配置保存: 未自动保存")
     return lines
 
 

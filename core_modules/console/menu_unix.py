@@ -30,12 +30,12 @@ class MenuItem:
     inline_selected_index: int = 0
 
 
-DEFAULT_HELP_LINES = ["↑↓ 移动 | ←→ 选择行内项 | Enter 确认/编辑 | Space 切换 | s 手动保存配置 | q 返回"]
+DEFAULT_HELP_LINES = ["↑↓ 移动 | ←→ 选择行内项 | Enter 确认/编辑 | Space 切换 | s 手动保存配置 | Esc 返回"]
 EDIT_HELP_LINES = ["Enter 确认 | Esc 取消 | ↑↓ 放弃编辑 | ←→ 移动 | Backspace/Delete 删除"]
 TEXT_HELP_LINES = ["输入内容后 Enter 确认 | Esc 取消 | ←→ 移动 | Backspace/Delete 删除"]
-CONFIRM_HELP_LINES = ["↑↓ 移动 | Enter 确认 | q 取消"]
-SELECT_HELP_LINES = ["↑↓ 移动 | Enter 选择 | q 返回 | 输入开始过滤 | / 过滤模式 | Backspace 清空"]
-MESSAGE_HELP_LINES = ["任意键返回"]
+CONFIRM_HELP_LINES = ["↑↓ 移动 | Enter 确认 | Esc 取消"]
+SELECT_HELP_LINES = ["↑↓ 移动 | Enter 选择 | Esc 返回 | 输入开始过滤 | / 过滤模式 | Backspace 清空"]
+MESSAGE_HELP_LINES = ["Esc 返回"]
 MIN_SCREEN_WIDTH = 160
 MIN_SCREEN_HEIGHT = 50
 
@@ -124,6 +124,89 @@ def _char_display_width(char: str) -> int:
     return 2 if unicodedata.east_asian_width(char) in {"W", "F"} else 1
 
 
+def _coerce_printable_key(key) -> str | None:
+    if isinstance(key, str):
+        return key if key.isprintable() else None
+    if isinstance(key, int) and 0 <= key <= 0x10FFFF:
+        if key >= curses.KEY_MIN:
+            return None
+        try:
+            char = chr(key)
+        except ValueError:
+            return None
+        return char if char.isprintable() else None
+    return None
+
+
+def _start_filter_buffer(current_filter: str, seed_key=None) -> tuple[list[str], int]:
+    chars = list(current_filter)
+    char = _coerce_printable_key(seed_key)
+    if char is not None:
+        chars.append(char)
+    return chars, len(chars)
+
+
+def _cursor_display_offset(chars: list[str], cursor_pos: int) -> int:
+    safe_pos = max(0, min(cursor_pos, len(chars)))
+    return _display_width("".join(chars[:safe_pos]))
+
+
+def _filter_cursor_x(left: int, content_width: int, chars: list[str], cursor_pos: int) -> int:
+    prompt_width = _display_width("过滤: ")
+    return min(left + prompt_width + _cursor_display_offset(chars, cursor_pos), max(left, left + content_width - 1))
+
+
+def _apply_text_edit_key(key, chars: list[str], cursor_pos: int) -> tuple[list[str], int, bool]:
+    if key in (curses.KEY_BACKSPACE, "\b", "\x7f"):
+        if cursor_pos > 0:
+            del chars[cursor_pos - 1]
+            cursor_pos -= 1
+        return chars, cursor_pos, True
+    if key == curses.KEY_DC:
+        if cursor_pos < len(chars):
+            del chars[cursor_pos]
+        return chars, cursor_pos, True
+    if key == curses.KEY_LEFT:
+        return chars, max(0, cursor_pos - 1), True
+    if key == curses.KEY_RIGHT:
+        return chars, min(len(chars), cursor_pos + 1), True
+    char = _coerce_printable_key(key)
+    if char is not None:
+        chars.insert(cursor_pos, char)
+        return chars, cursor_pos + 1, True
+    return chars, cursor_pos, False
+
+
+def _is_enter_key(key) -> bool:
+    return key in (10, 13, "\n", "\r", curses.KEY_ENTER)
+
+
+def _is_escape_key(key) -> bool:
+    return key == 27 or key == "\x1b"
+
+
+_ESCDELAY_CONFIGURED = False
+
+
+def _configure_escape_delay() -> None:
+    global _ESCDELAY_CONFIGURED
+    if _ESCDELAY_CONFIGURED:
+        return
+    try:
+        curses.set_escdelay(25)
+    except (AttributeError, curses.error):
+        return
+    _ESCDELAY_CONFIGURED = True
+
+
+def _enable_keypad(stdscr) -> None:
+    _configure_escape_delay()
+    try:
+        stdscr.keypad(True)
+    except (AttributeError, curses.error):
+        return
+
+
 def run_menu(
     title: str,
     items: list[MenuItem],
@@ -144,6 +227,7 @@ def run_menu(
 
     def _render(stdscr) -> str | None:
         nonlocal index, transient_lines, editing_index, edit_chars, edit_cursor
+        _enable_keypad(stdscr)
         curses.curs_set(0)
         last_signature: tuple | None = None
         if refresh_state is not None:
@@ -158,7 +242,7 @@ def run_menu(
                 _render_screen_too_small(stdscr, title=title, height=height, width=width)
                 stdscr.refresh()
                 key = stdscr.getch()
-                if key == ord("q"):
+                if _is_escape_key(key):
                     return None
                 continue
             help_text = _menu_help_lines(help_lines, editing_index is not None)
@@ -411,7 +495,7 @@ def _handle_menu_key(*, key, items: list[MenuItem], index: int) -> tuple[str | N
             items[index].inline_selected_index + 1,
         )
         return None, index, None, [], 0
-    if key in (10, 13):
+    if _is_enter_key(key):
         if 0 <= index < len(items) and items[index].focusable:
             item = items[index]
             if item.inline_choices:
@@ -422,7 +506,7 @@ def _handle_menu_key(*, key, items: list[MenuItem], index: int) -> tuple[str | N
                 return None, index, index, list(initial), len(initial)
             return item.key, index, None, [], 0
         return None, index, None, [], 0
-    if key == ord("q"):
+    if _is_escape_key(key):
         return "__exit__", index, None, [], 0
     if key == ord("s"):
         return "save", index, None, [], 0
@@ -443,6 +527,7 @@ def prompt_text(label: str, initial: str = "", help_lines: list[str] | None = No
 
     def _run(stdscr) -> str | None:
         nonlocal chars, cursor
+        _enable_keypad(stdscr)
         curses.curs_set(1)
         while True:
             stdscr.clear()
@@ -461,7 +546,7 @@ def prompt_text(label: str, initial: str = "", help_lines: list[str] | None = No
             _draw_text(stdscr, 3, 0, text, width=width - 1)
             stdscr.move(3, min(cursor, max(0, width - 2)))
             key = stdscr.get_wch()
-            if key in ("\n", "\r"):
+            if _is_enter_key(key):
                 return text.strip()
             if key == "\x1b":
                 return None
@@ -503,6 +588,7 @@ def run_confirmation(
 
     def _run(stdscr) -> bool:
         nonlocal index
+        _enable_keypad(stdscr)
         curses.curs_set(0)
         while True:
             stdscr.clear()
@@ -511,7 +597,7 @@ def run_confirmation(
                 _render_screen_too_small(stdscr, title=title, height=height, width=width)
                 stdscr.refresh()
                 key = stdscr.getch()
-                if key == ord("q"):
+                if _is_escape_key(key):
                     return False
                 continue
             help_text = help_lines or CONFIRM_HELP_LINES
@@ -547,9 +633,9 @@ def run_confirmation(
                 index = max(0, index - 1)
             elif key == curses.KEY_DOWN:
                 index = min(len(items) - 1, index + 1)
-            elif key in (10, 13):
+            elif _is_enter_key(key):
                 return items[index].key == "__confirm__"
-            elif key == ord("q"):
+            elif _is_escape_key(key):
                 return False
 
     return curses.wrapper(_run)
@@ -567,8 +653,7 @@ def run_select_list(
 ) -> tuple[int | None, str]:
     """显示可过滤列表，并返回选中项索引与当前过滤词。"""
     index = max(0, min(initial_index, len(lines) - 1)) if lines else 0
-    filter_buf = list(filter_text)
-    cursor_pos = len(filter_buf)
+    filter_buf, cursor_pos = _start_filter_buffer(filter_text)
     in_filter_mode = False
     disabled_indexes = set(disabled_indexes or set())
 
@@ -598,15 +683,16 @@ def run_select_list(
 
     def _run(stdscr) -> tuple[int | None, str]:
         nonlocal index, filter_buf, cursor_pos, in_filter_mode
-        curses.curs_set(1)
+        _enable_keypad(stdscr)
+        curses.curs_set(0)
         while True:
             stdscr.clear()
             height, width = stdscr.getmaxyx()
             if _is_screen_too_small(height, width):
                 _render_screen_too_small(stdscr, title=title, height=height, width=width)
                 stdscr.refresh()
-                key = stdscr.getch()
-                if key == ord("q"):
+                key = stdscr.get_wch()
+                if _is_escape_key(key):
                     return None, "".join(filter_buf)
                 continue
             current_filter = "".join(filter_buf)
@@ -625,35 +711,36 @@ def run_select_list(
             )
             row = divider_row + 1
             if in_filter_mode:
-                prompt = f"过滤 [{current_filter}]" if current_filter else "过滤 []"
-                _draw_text(stdscr, height - 2, left, prompt, width=content_width, attrs=curses.A_DIM)
-                _draw_text(stdscr, height - 1, left, "".join(filter_buf), width=content_width)
-                stdscr.move(height - 1, min(left + cursor_pos, max(left, left + content_width - 1)))
+                curses.curs_set(1)
+                prompt = f"过滤: {''.join(filter_buf)}"
+                _draw_text(stdscr, height - 1, left, prompt, width=content_width, attrs=curses.A_DIM)
+                stdscr.move(height - 1, _filter_cursor_x(left, content_width, filter_buf, cursor_pos))
             elif current_filter:
+                curses.curs_set(0)
                 _draw_text(stdscr, row, left, f"过滤: {current_filter} ({len(filtered)}/{len(lines)})", width=content_width, attrs=curses.A_DIM)
                 row += 1
+            else:
+                curses.curs_set(0)
             if not filtered:
                 _draw_text(stdscr, row, left, empty_message, width=content_width, attrs=curses.A_DIM)
                 row += 1
-                curses.curs_set(0)
-                key = stdscr.getch()
-                curses.curs_set(1)
-                if key == ord("q"):
-                    return None, current_filter
-                if key in (curses.KEY_BACKSPACE, "\b", "\x7f"):
-                    if filter_buf:
-                        filter_buf.pop()
-                    else:
-                        in_filter_mode = False
-                elif key == 27:
+                if in_filter_mode:
+                    stdscr.move(height - 1, _filter_cursor_x(left, content_width, filter_buf, cursor_pos))
+                key = stdscr.get_wch()
+                if _is_escape_key(key):
                     filter_buf = []
                     cursor_pos = 0
                     in_filter_mode = False
-                elif key in (10, 13):
+                    index = 0
+                    continue
+                if key in (curses.KEY_BACKSPACE, "\b", "\x7f"):
+                    filter_buf, cursor_pos, handled = _apply_text_edit_key(key, filter_buf, cursor_pos)
+                    if not handled and not filter_buf:
+                        in_filter_mode = False
+                elif _is_enter_key(key):
                     return None, current_filter
-                elif isinstance(key, str) and key.isprintable():
-                    filter_buf.insert(cursor_pos, key)
-                    cursor_pos += 1
+                else:
+                    filter_buf, cursor_pos, _handled = _apply_text_edit_key(key, filter_buf, cursor_pos)
                 index = 0
                 continue
             safe_index = max(0, min(index, len(filtered) - 1))
@@ -670,37 +757,21 @@ def run_select_list(
                     attrs |= curses.A_DIM
                 _draw_text(stdscr, current_row, left, f"{prefix} {line}", width=content_width, attrs=attrs)
             if in_filter_mode:
-                text = "".join(filter_buf)
-                _draw_text(stdscr, height - 1, left, text, width=content_width)
-                stdscr.move(height - 1, min(left + cursor_pos, max(left, left + content_width - 1)))
-            key = stdscr.getch()
+                prompt = f"过滤: {''.join(filter_buf)}"
+                _draw_text(stdscr, height - 1, left, prompt, width=content_width, attrs=curses.A_DIM)
+                stdscr.move(height - 1, _filter_cursor_x(left, content_width, filter_buf, cursor_pos))
+            key = stdscr.get_wch()
             if in_filter_mode:
-                if key in (10, 13):
+                if _is_enter_key(key):
                     return None, current_filter
-                if key == 27:
+                if _is_escape_key(key):
                     filter_buf = []
                     cursor_pos = 0
                     in_filter_mode = False
                     curses.curs_set(0)
                     continue
-                if key in (curses.KEY_BACKSPACE, "\b", "\x7f"):
-                    if filter_buf:
-                        filter_buf.pop()
-                        cursor_pos -= 1
-                    continue
-                if key == curses.KEY_DC:
-                    if cursor_pos < len(filter_buf):
-                        del filter_buf[cursor_pos]
-                    continue
-                if key == curses.KEY_LEFT:
-                    cursor_pos = max(0, cursor_pos - 1)
-                    continue
-                if key == curses.KEY_RIGHT:
-                    cursor_pos = min(len(filter_buf), cursor_pos + 1)
-                    continue
-                if isinstance(key, str) and key.isprintable():
-                    filter_buf.insert(cursor_pos, key)
-                    cursor_pos += 1
+                filter_buf, cursor_pos, handled = _apply_text_edit_key(key, filter_buf, cursor_pos)
+                if handled:
                     continue
                 if key == curses.KEY_UP:
                     curses.curs_set(0)
@@ -717,28 +788,29 @@ def run_select_list(
                 index = _move_enabled_index(filtered, safe_index, -1)
             elif key == curses.KEY_DOWN:
                 index = _move_enabled_index(filtered, safe_index, 1)
-            elif key in (10, 13):
+            elif _is_enter_key(key):
                 if filtered[safe_index][0] in disabled_indexes:
                     continue
                 return filtered[safe_index][0], current_filter
-            elif key == ord("q"):
+            elif _is_escape_key(key):
                 return None, current_filter
-            elif key == ord("/") or key == ord("?"):
+            elif key in {"/", "?"}:
                 curses.curs_set(1)
                 in_filter_mode = True
-                filter_buf = []
-                cursor_pos = 0
+                filter_buf, cursor_pos = _start_filter_buffer(current_filter)
             elif key in (curses.KEY_BACKSPACE, "\b", "\x7f"):
                 if filter_buf:
                     filter_buf.pop()
                 elif current_filter:
                     filter_buf = list(current_filter[:-1])
                 index = 0
-            elif isinstance(key, str) and key.isprintable():
+            else:
+                char = _coerce_printable_key(key)
+                if char is None:
+                    continue
                 curses.curs_set(1)
                 in_filter_mode = True
-                filter_buf.append(key)
-                cursor_pos = len(filter_buf)
+                filter_buf, cursor_pos = _start_filter_buffer(current_filter, char)
                 index = 0
 
     return curses.wrapper(_run)
@@ -747,6 +819,7 @@ def run_select_list(
 def show_message(title: str, lines: list[str], help_lines: list[str] | None = None) -> None:
     """显示提示信息并等待用户返回。"""
     def _run(stdscr) -> None:
+        _enable_keypad(stdscr)
         curses.curs_set(0)
         while True:
             stdscr.clear()
@@ -754,7 +827,7 @@ def show_message(title: str, lines: list[str], help_lines: list[str] | None = No
             if _is_screen_too_small(height, width):
                 _render_screen_too_small(stdscr, title=title, height=height, width=width)
                 stdscr.refresh()
-                if stdscr.getch() != -1:
+                if _is_escape_key(stdscr.getch()):
                     return None
                 continue
             help_text = help_lines or MESSAGE_HELP_LINES
@@ -777,7 +850,7 @@ def show_message(title: str, lines: list[str], help_lines: list[str] | None = No
                 _draw_text(stdscr, row, left, line, width=content_width, attrs=attr)
                 row += 1
             key = stdscr.getch()
-            if key != -1:
+            if _is_escape_key(key):
                 return None
 
     curses.wrapper(_run)
@@ -797,6 +870,7 @@ def run_waiting_message(title: str, lines: list[str], worker) -> object:
     thread.start()
 
     def _run(stdscr):
+        _enable_keypad(stdscr)
         curses.curs_set(0)
         while thread.is_alive():
             stdscr.clear()

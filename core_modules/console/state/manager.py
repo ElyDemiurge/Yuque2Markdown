@@ -11,6 +11,11 @@ def remember_menu_index(session: SessionState, menu_key: str, items: list, actio
         if item.key == action:
             session.menu_index_map[menu_key] = index
             return
+        inline_choices = getattr(item, "inline_choices", None) or []
+        for choice in inline_choices:
+            if getattr(choice, "key", None) == action:
+                session.menu_index_map[menu_key] = index
+                return
 
 
 def build_selected_docs_text(session: SessionState) -> str:

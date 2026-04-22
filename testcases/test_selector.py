@@ -1,10 +1,12 @@
 from core_modules.export.models import TocNode
 from core_modules.console.selector import (
+    HELP_LINE_1,
     _SelectorState,
     _build_footer_line,
     _collect_expandable_keys,
     _flatten_visible,
     _node_key,
+    _set_filter_text,
     _truncate,
     select_doc_ids,
 )
@@ -39,6 +41,30 @@ def test_selector_filter_keeps_matching_doc() -> None:
     assert items[1].node.title == "Alpha 文档"
 
 
+def test_selector_filter_matching_directory_shows_docs_in_collapsed_directory() -> None:
+    child = TocNode(uuid="doc-1", node_type="DOC", title="Alpha 文档", doc_id=1)
+    root = TocNode(uuid="dir-1", node_type="TITLE", title="Android 目录", children=[child])
+
+    items = _flatten_visible([root], expanded_keys=set(), filter_text="android")
+
+    assert len(items) == 2
+    assert items[0].node.title == "Android 目录"
+    assert items[0].expanded is True
+    assert items[1].node.title == "Alpha 文档"
+
+
+def test_selector_filter_finds_matching_doc_inside_collapsed_directory() -> None:
+    child = TocNode(uuid="doc-1", node_type="DOC", title="Alpha 文档", doc_id=1)
+    root = TocNode(uuid="dir-1", node_type="TITLE", title="目录", children=[child])
+
+    items = _flatten_visible([root], expanded_keys=set(), filter_text="alpha")
+
+    assert len(items) == 2
+    assert items[0].node.title == "目录"
+    assert items[0].expanded is True
+    assert items[1].node.title == "Alpha 文档"
+
+
 def test_selector_expandable_keys_include_directory() -> None:
     child = TocNode(uuid="doc-1", node_type="DOC", title="A", doc_id=1)
     root = TocNode(uuid="dir-1", node_type="TITLE", title="目录", children=[child])
@@ -70,3 +96,32 @@ def test_selector_truncate_respects_display_width_for_long_chinese_title() -> No
     truncated = _truncate(text, 40)
     assert truncated.endswith("…")
     assert len(truncated) < len(text)
+
+
+def test_selector_help_line_uses_esc_return() -> None:
+    assert "Esc 返回" in HELP_LINE_1
+
+
+def test_selector_filter_updates_items_immediately() -> None:
+    child = TocNode(uuid="doc-1", node_type="DOC", title="Binary 文档", doc_id=1)
+    root = TocNode(uuid="dir-1", node_type="TITLE", title="目录", children=[child])
+    state = _SelectorState(root_nodes=[root], expanded_keys={_node_key(root)})
+    state.items = _flatten_visible(state.root_nodes, state.expanded_keys)
+
+    _set_filter_text(state, "binary")
+
+    assert state.filter_text == "binary"
+    assert len(state.items) == 2
+    assert state.items[1].node.title == "Binary 文档"
+
+
+def test_selector_filter_can_clear_results_immediately() -> None:
+    child = TocNode(uuid="doc-1", node_type="DOC", title="Binary 文档", doc_id=1)
+    root = TocNode(uuid="dir-1", node_type="TITLE", title="目录", children=[child])
+    state = _SelectorState(root_nodes=[root], expanded_keys={_node_key(root)})
+    state.items = _flatten_visible(state.root_nodes, state.expanded_keys)
+
+    _set_filter_text(state, "zzz")
+
+    assert state.filter_text == "zzz"
+    assert state.items == []

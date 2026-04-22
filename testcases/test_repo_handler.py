@@ -1,7 +1,7 @@
 """知识库选择处理测试。"""
 
 from core_modules.config.models import AppConfig, SessionState
-from core_modules.console.handlers.repo import handle_repo_input_inline, handle_repo_selection
+from core_modules.console.handlers.repo import handle_doc_selection, handle_repo_input_inline, handle_repo_selection
 
 
 def test_handle_repo_input_inline_resets_previous_doc_selection() -> None:
@@ -167,3 +167,44 @@ def test_handle_repo_selection_rejects_shared_repo() -> None:
 
     assert changed is False
     assert "（非当前登录账号的知识库暂不支持导出，如受邀协作知识库）" in captured["lines"][0]
+
+
+def test_handle_doc_selection_handles_fetch_error_without_crashing() -> None:
+    config = AppConfig(token="demo-token")
+    session = SessionState(connection_ok=True, repo_input="demo/repo", repo_display_name="测试库")
+    captured = {}
+
+    class DummyClient:
+        last_rate_limit = {"limit": 500, "remaining": 499, "reset": None}
+
+    def fake_build_client_from_config(_config, _token):
+        return DummyClient()
+
+    def fake_show_message(title, lines):
+        captured["title"] = title
+        captured["lines"] = lines
+
+    import core_modules.console.handlers.repo as repo_module
+
+    original_fetch = repo_module.fetch_repo_toc
+    original_show = repo_module.show_message
+    repo_module.fetch_repo_toc = lambda _client, _repo_input: (_ for _ in ()).throw(RuntimeError("toc boom"))
+    repo_module.show_message = fake_show_message
+    try:
+        rate_limit, changed = handle_doc_selection(
+            config,
+            session,
+            "暂无",
+            build_client_from_config=fake_build_client_from_config,
+            append_console_log=lambda _message: None,
+        )
+    finally:
+        repo_module.fetch_repo_toc = original_fetch
+        repo_module.show_message = original_show
+
+    assert changed is False
+    assert rate_limit == "X-RateLimit-Limit=500 | X-RateLimit-Remaining=499"
+    assert session.status_message == "文档选择失败: toc boom"
+    assert session.last_error_text == "toc boom"
+    assert captured["title"] == "文档选择失败"
+    assert captured["lines"] == ["toc boom"]
