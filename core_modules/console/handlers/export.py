@@ -105,7 +105,7 @@ def handle_export(
     result_lines_holder: dict[str, list[str]] = {"lines": []}
 
     def _build_completion_lines(export_result):
-        """在导出完成后缓存结果摘要，供主流程后续复用。"""
+        """导出完成后缓存结果摘要，供主流程复用。"""
         lines = build_result_lines(config, session, export_result)
         result_lines_holder["lines"] = lines
         return lines
@@ -138,7 +138,7 @@ def handle_export(
     if config.ui_preferences.auto_save_after_export:
         config = persist_config(config, session, "post_export")
     session.last_exported_docs = result.exported_docs
-    # 优先复用进度界面生成的完成摘要，避免和最终弹窗文案出现细微差异。
+    # 复用进度界面生成的完成摘要，避免和最终弹窗文案出现差异。
     session.last_result_summary = result_lines_holder["lines"] or build_result_lines(config, session, result)
     session.status_message = "导出完成"
     session.last_error_text = ""

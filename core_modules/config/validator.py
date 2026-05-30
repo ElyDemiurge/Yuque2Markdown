@@ -190,7 +190,7 @@ def _is_valid_repo_input(value: str) -> bool:
     """检查知识库输入格式是否合法。
 
     合法格式：
-    - https://www.yuque.com/group/book（仅前两层路径，忽略后续）
+    - https://www.yuque.com/group/book（仅前两层路径，忽略后面的路径段）
     - group_login/book_slug
 
     不合法格式：

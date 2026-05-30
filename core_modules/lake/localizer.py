@@ -117,8 +117,8 @@ def rewrite_doc_links(
         target_path = doc_slug_map.get(slug)
         if not target_path:
             continue
-        relative_path = os.path.relpath(target_path, start=current_markdown_path.parent)
-        # 同时替换 original_url 和 normalized_url（含 query/hash 变体）
+        relative_path = os.path.relpath(target_path, start=current_markdown_path.parent).replace(os.sep, "/")
+        # original_url 和 normalized_url 都可能出现在 Markdown 中。
         for url in _url_variants(resource.original_url, resource.normalized_url):
             if url in markdown:
                 markdown = markdown.replace(url, relative_path)
@@ -134,11 +134,10 @@ def _url_variants(original: str, normalized: str) -> list[str]:
         if url and url not in variants:
             variants.append(url)
         parsed = urlparse(url)
-        # 去掉 query 和 fragment 再比较/替换
+        # 去掉 query 和 fragment，覆盖语雀返回的 URL 变体。
         base = parsed._replace(query="", fragment="").geturl()
         if base and base not in variants:
             variants.append(base)
-        # 只有 query
         if parsed.query and f"{parsed.scheme}://{parsed.netloc}{parsed.path}" not in variants:
             base_no_query = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
             if base_no_query not in variants:

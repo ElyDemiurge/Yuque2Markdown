@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import posixpath
 import re
 from pathlib import Path
 
@@ -21,8 +22,8 @@ def sanitize_name(name: str, fallback: str = "untitled") -> str:
     """
     # 明显像路径输入时只保留末段，避免把目录结构带进输出文件名；
     # 普通标题里的 "/"（例如 "/bin/sh"）则保留语义，统一替换成 "_".
-    if os.path.isabs(name) or re.search(r"(^|[/\\])\.\.([/\\]|$)", name):
-        name = os.path.basename(name)
+    if posixpath.isabs(name) or re.search(r"(^|/)\.\.(/|$)", name):
+        name = posixpath.basename(name)
 
     # 将分隔符视为普通非法字符处理，避免标题中包含 "/" 时被错误截断。
     name = name.replace("/", "_").replace("\\", "_")
@@ -33,7 +34,7 @@ def sanitize_name(name: str, fallback: str = "untitled") -> str:
     # 将连续空白压缩为单个空格。
     cleaned = re.sub(r"\s+", " ", cleaned)
 
-    # 去掉结尾的点，避免后续兼容其他文件系统时出现问题。
+    # 去掉结尾的点，避开 Windows 等文件系统的边界行为。
     cleaned = cleaned.rstrip(".")
 
     # 如果清洗后只剩空串或 "." / ".."，则回退到兜底文件名。
@@ -54,7 +55,7 @@ def unique_name(name: str, used_names: set[str], suffix: str | None = None) -> s
     参数:
         name: 原始名称。
         used_names: 当前目录中已占用的名称集合，会被原地更新。
-        suffix: 首次冲突时优先尝试追加的自定义后缀。
+        suffix: 首次冲突时尝试追加的自定义后缀。
     """
     candidate = name
     index = 1
@@ -89,7 +90,7 @@ def safe_join(base: Path, *parts: str) -> Path:
         sanitized = sanitize_name(part)
         result = result / sanitized
 
-    # 优先用 resolve() 做严格校验；失败时再退回到保守的字符串检查。
+    # 先用 resolve() 做严格校验；失败时退回到保守的字符串检查。
     try:
         result_resolved = result.resolve()
         base_resolved = base.resolve()

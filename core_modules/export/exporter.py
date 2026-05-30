@@ -55,7 +55,7 @@ def build_doc_markdown_result(
         render_result = render_doc_markdown(doc_data)
     if not offline_assets:
         return render_result
-    # 启用离线资源后，优先复用本地 assets；缺失时再尝试下载并改写链接。
+    # 启用离线资源后复用本地 assets；缺失时再下载并改写链接。
     return localize_markdown_assets(
         render_result,
         assets_dir=assets_dir,
@@ -107,7 +107,7 @@ class Exporter:
         checkpoint.doc_slug_map.update(repo_slug_map)
 
         result = ExportResult(repo=repo)
-        # 先收集实际待导出的标题列表，用于初始化进度条总量与等待预览。
+        # 收集实际待导出的标题，用于初始化进度条总量与等待预览。
         queue = self._collect_doc_titles(toc_tree, checkpoint, options)
         total_docs = len(queue)
         selection_warning = None
@@ -216,7 +216,7 @@ class Exporter:
                 continue
 
             if node.node_type == "LINK":
-                # 链接节点只在全量导出时保留为跳转文档；按选中文档导出时直接忽略。
+                # 链接节点只在全量导出时保留为跳转文档；选中文档导出时忽略。
                 if options.selected_doc_ids is not None:
                     continue
                 content = f"# {node.title}\n\n原始链接：{node.url or ''}\n"
@@ -425,10 +425,10 @@ class Exporter:
 
         log.doc_markdown_done(node.title, state.warning_count, len(render_result.resources))
 
-        # 如果启用离线资源，先下载图片并改写链接，再写盘；否则直接写原始 Markdown。
+        # 启用离线资源时，先处理资源和链接，再写入最终 Markdown。
         final_result = render_result
         if options.offline_assets:
-            # 导出与根据 .lake 重新生成 Markdown 使用同一套资源处理代码，避免两处逻辑不一致。
+            # 导出和 .lake 重新生成共用资源处理逻辑，避免两处结果不一致。
             self._emit_progress(
                 progress,
                 current_doc_title=node.title,
@@ -492,7 +492,7 @@ class Exporter:
                     new_warnings=warning_messages,
                     latest_event=f"{node.title} 资源处理完成",
                 )
-            # 总是更新下载计数
+            # 资源警告为空时也要刷新下载计数。
             self._emit_progress(
                 progress,
                 current_doc_downloaded=download_count,
@@ -613,7 +613,7 @@ class Exporter:
             try:
                 waiting_titles.remove(current_title)
             except ValueError:
-                # 当前标题可能已被提前移除，直接保持现状即可。
+                # 标题可能已被提前移除，此时保持现状。
                 pass
             return waiting_titles[:5]
         return [title for title in progress.waiting_preview if title != current_title][:5]

@@ -34,7 +34,7 @@ core_modules.export.exporter
 - `yuque2markdown.py`
   程序主入口。执行启动前检查，然后进入交互式控制台。
 - `regenerate_md.py`
-  维护脚本。遍历 `output/` 中已有的 `.lake` 与 `.yuque.json`，重新生成对应 Markdown；本地已有 `assets/` 时优先复用，缺失图片且当前配置里有 Token 时再补充下载。
+  维护脚本。遍历 `output/` 中已有的 `.lake` 与 `.yuque.json`，重新生成对应 Markdown；本地已有 `assets/` 时复用，缺失图片且配置里有 Token 时再补充下载。
 - `pytest.ini`
   pytest 统一入口配置，约定测试目录为 `testcases/`。
 - `output/`
@@ -61,24 +61,24 @@ core_modules.export.exporter
 该目录用于交互式终端界面和菜单流程。
 
 - `app.py`：主循环与主菜单入口
-- `menu.py`：按平台分发菜单实现；当前版本实际使用 `menu_unix.py`
-- `menu_unix.py`：macOS 交互式菜单实现
-- `menu_windows.py`：Windows 菜单待实现占位，当前版本不会启用
+- `menu.py`：按平台分发菜单实现，Windows 使用 `menu_windows.py`，其他支持平台使用 `menu_unix.py`
+- `menu_unix.py`：macOS curses 交互式菜单实现
+- `menu_windows.py`：Windows curses 交互式菜单实现，依赖 `windows-curses`
 - `selector.py`：文档树选择器
 - `controllers/`：导出设置、运行设置、高级设置等子菜单控制器
 - `handlers/`：知识库连接、知识库选择、导出执行、配置更新等业务处理
-- `state/`：运行状态整理与状态栏展示辅助函数
+- `state/`：运行状态整理、主菜单文案与状态栏展示辅助函数
 - `helpers.py`：控制台共享工具函数
 
 子目录分工如下：
 
 - `controllers/` 更偏菜单组织与交互流程
 - `handlers/` 更偏业务动作与状态更新
-- `state/` 负责将运行时数据整理成可显示文本
+- `state/` 负责把运行时数据整理成展示文本，避免主循环堆积展示规则
 
-当前控制台交互细节：
+控制台交互细节：
 
-- 主菜单和子菜单统一使用 `Esc` 返回，当前版本已不再使用 `q` 作为返回键。
+- 主菜单和子菜单统一使用 `Esc` 返回，不再使用 `q` 作为返回键。
 - 知识库列表支持输入过滤与 `/` 过滤模式，过滤词支持方向键编辑。
 - 文档树过滤为实时刷新；命中目录名时会自动展开目录，命中折叠目录内文档时也会显示路径。
 - 导出进度界面支持区块切换和滚动查看；导出结束后可聚焦“返回”按钮退出。
@@ -111,14 +111,14 @@ core_modules.export.exporter
 
 Lake 格式的详细规则、卡片类型和警告规则见 [语雀lake格式解析.md](语雀lake格式解析.md)。
 
-当前版本里，文档树选择器位于 `core_modules/console/selector.py`。
+文档树选择器位于 `core_modules/console/selector.py`。
 
 ## 主要执行顺序
 
 ### 1. 启动阶段
 
 - `yuque2markdown.py` 执行启动检查
-- 非 macOS 平台会在这里直接返回“不支持”
+- 非 macOS / Windows 平台会在这里直接返回“不支持”；Windows 缺少 `windows-curses` 时会提示安装
 - `config/store.py` 加载配置文件
 - `console/app.py` 初始化 `SessionState`
 - 控制台主菜单开始接收用户操作
@@ -131,7 +131,7 @@ Lake 格式的详细规则、卡片类型和警告规则见 [语雀lake格式解
 - 返回结果写回 `SessionState`
 - 状态栏和菜单根据 `SessionState` 更新显示
 
-当前版本里，控制台中的“刷新连接状态”默认走异步刷新，避免在网络请求期间阻塞菜单界面。
+控制台中的“刷新连接状态”默认走异步刷新，网络请求期间菜单仍可刷新。
 
 ### 3. 导出阶段
 
@@ -166,7 +166,7 @@ Lake 格式的详细规则、卡片类型和警告规则见 [语雀lake格式解
 
 更完整字段说明见 [配置文件说明.md](配置文件说明.md)。
 
-当前版本仅支持个人语雀知识库导出，不支持企业版自定义 Cookie key。
+项目仅支持个人语雀知识库导出，不支持企业版自定义 Cookie key。
 非当前登录账号的知识库会在选择界面灰显，且暂不支持导出，如受邀协作知识库。
 
 ### `SessionState`
@@ -196,7 +196,7 @@ Lake 格式的详细规则、卡片类型和警告规则见 [语雀lake格式解
 
 ## 测试结构
 
-项目测试统一放在 `testcases/` 目录，并通过 `pytest.ini` 作为统一入口。当前大致分为：
+项目测试统一放在 `testcases/` 目录，并通过 `pytest.ini` 作为统一入口。测试大致分为：
 
 - 配置与校验：`test_config_store.py`、`test_config_validator.py`
 - 控制台与菜单：`test_console_app.py`、`test_console_menu.py`
@@ -251,7 +251,7 @@ Lake 格式的详细规则、卡片类型和警告规则见 [语雀lake格式解
 3. 新增导出状态或进度展示时，要同步更新：
    - `export/progress.py`
    - 对应测试
-4. 修改路径生成逻辑时，要优先验证：
+4. 修改路径生成逻辑时，要验证：
    - 路径清洗
    - 相对路径改写
    - 断点恢复与重复导出

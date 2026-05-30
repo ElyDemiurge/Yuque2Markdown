@@ -19,7 +19,7 @@ from core_modules.config.models import (
     normalize_auth_mode,
 )
 from core_modules.config.store import load_config
-from core_modules.auth.browser_cookies import load_yuque_cookie_from_browsers
+from core_modules.auth.browser_cookies import load_yuque_cookie_from_browsers, supports_browser_cookie_import
 from core_modules.console.helpers import parse_action
 from core_modules.console.menu import InlineChoice, MenuItem, run_menu, show_message
 from core_modules.export.cli import build_client
@@ -34,11 +34,17 @@ RUNTIME_SETTINGS_MENU_KEY = "runtime_settings"
 ADVANCED_SETTINGS_MENU_KEY = "advanced_settings"
 
 
+def _supports_browser_cookie_import() -> bool:
+    """平台是否支持从浏览器读取 Cookie。"""
+    system_name = "Darwin" if sys.platform == "darwin" else "Windows" if sys.platform.startswith("win") else sys.platform
+    return supports_browser_cookie_import(system_name)
+
+
 def run_console_app() -> int:
     """运行控制台主循环并处理用户操作。
 
     返回:
-        进程退出码。当前实现正常退出时始终返回 ``0``。
+        进程退出码。正常退出返回 ``0``。
     """
     config = load_config()
     session = SessionState(repo_input=config.last_repo_input)
@@ -85,7 +91,7 @@ def run_console_app() -> int:
             state = session.menu_refresh_state
             session.menu_refresh_state = None
             session.transient_lines = []
-            # 异步刷新结束后，由主循环统一把结果折回到 session，避免线程里直接改 UI 状态。
+            # 异步刷新结束后由主循环回填 session，避免后台线程直接改 UI 状态。
             if state is not None:
                 state.done = True
                 state.lines = []
@@ -126,7 +132,11 @@ def run_console_app() -> int:
                 session.last_error_text = ""
                 session.network_test_message = ""
                 session.token_status_message = f"已切换为 {auth_mode_label(new_mode)} 登录，请刷新连接状态"
-                if new_mode == AUTH_MODE_COOKIE and not (config.cookie or "").strip():
+                if (
+                    new_mode == AUTH_MODE_COOKIE
+                    and not (config.cookie or "").strip()
+                    and _supports_browser_cookie_import()
+                ):
                     result = load_yuque_cookie_from_browsers()
                     if result.ok:
                         config.cookie = result.cookie
@@ -138,11 +148,34 @@ def run_console_app() -> int:
                         session.token_status_message = result.message
                         _append_console_event("自动加载 Cookie 失败", 登录方式=new_mode, 知识库=session.repo_input or "-", 说明=result.message)
                         show_message("读取 Cookie 失败", [result.message])
+                elif new_mode == AUTH_MODE_COOKIE and not (config.cookie or "").strip():
+                    session.token_status_message = "请手动输入 Cookie 后刷新连接状态"
+                    session.menu_index_map[MAIN_MENU_KEY] = 3
                 session.dirty = True
                 _append_console_event("切换登录方式", 原方式=old_mode, 新方式=new_mode, 知识库=session.repo_input or "-")
                 repos = []
                 rate_limit_summary = "暂无"
                 config = _persist_config(config, session, "auth_mode_changed")
+            continue
+        if key == "cookie":
+            if edited_value is not None:
+                config.auth_mode = AUTH_MODE_COOKIE
+                config.cookie = edited_value.strip()
+                session.cookie_source_label = "手动输入" if config.cookie else ""
+                session.connection_ok = False
+                session.current_user_label = "未检查"
+                session.last_error_text = ""
+                session.network_test_message = ""
+                if config.cookie:
+                    session.token_status_message = "已重新设置 Cookie，请刷新连接状态"
+                else:
+                    session.token_status_message = "Cookie 已清空"
+                _append_console_event("更新 Cookie", 登录方式=AUTH_MODE_COOKIE, 知识库=session.repo_input or "-", 已设置=bool(config.cookie), 长度=len(config.cookie))
+                session.dirty = True
+                config = _persist_config(config, session, "cookie_changed")
+            repos = []
+            rate_limit_summary = "暂无"
+            session.connection_ok = False
             continue
         if key == "token":
             if edited_value is not None:
@@ -254,11 +287,11 @@ def _build_client_from_config(
     network_backoff_seconds: float | None = None,
     max_backoff_seconds: float | None = None,
 ):
-    """按当前配置构造 YuqueClient。
+    """按配置构造 YuqueClient。
 
     参数:
-        config: 当前应用配置。
-        credential: 当前登录凭据，可能是 Token 或 Cookie。
+        config: 应用配置。
+        credential: 登录凭据，可能是 Token 或 Cookie。
         timeout: 可选超时覆盖值。
         max_retries: 可选最大重试次数覆盖值。
         rate_limit_backoff_seconds: 可选限流退避覆盖值。
@@ -266,7 +299,7 @@ def _build_client_from_config(
         max_backoff_seconds: 可选单次等待上限覆盖值。
 
     返回:
-        按当前配置装配完成的客户端实例。
+        装配完成的客户端实例。
     """
     defaults = config.export_defaults
     proxy = defaults.proxy
@@ -350,19 +383,19 @@ def _persist_config(config: AppConfig, session: SessionState, reason: str) -> Ap
 
 def _build_main_title(session: SessionState) -> str:
     """构造主界面标题，必要时追加未保存标记。"""
-    base = f"Yuque2Markdown {APP_VERSION} 控制台"
-    return f"{base} [未保存]" if session.dirty else base
+    from core_modules.console.state.view import build_main_title
+    return build_main_title(session, APP_VERSION)
 
 
 def _build_main_menu_items(config: AppConfig, session: SessionState, rate_limit_summary: str) -> list[MenuItem]:
     """构造主菜单项列表。
 
     说明:
-        ``rate_limit_summary`` 当前未直接参与菜单项渲染，但保留参数以维持调用接口稳定，
-        便于后续扩展状态感知菜单。
+        ``rate_limit_summary`` 未直接参与菜单项渲染；保留参数以维持调用接口稳定。
     """
     has_token = bool((config.token or "").strip())
-    has_cookie = bool((config.cookie or "").strip())
+    cookie_value = _configured_cookie_value(config)
+    has_cookie = bool(cookie_value)
     auth_mode = normalize_auth_mode(config.auth_mode)
     items = [
         MenuItem("connection_section", "── 连接 ──", item_type="section", focusable=False),
@@ -382,13 +415,24 @@ def _build_main_menu_items(config: AppConfig, session: SessionState, rate_limit_
     ]
     if auth_mode == AUTH_MODE_TOKEN:
         items.insert(3, MenuItem("token", "设置 Token", _mask_token(config.token) if has_token else "未设置", input_style=True, edit_value=config.token or ""))
+    elif not _supports_browser_cookie_import():
+        items.insert(
+            3,
+            MenuItem(
+                "cookie",
+                "设置 Cookie",
+                _build_cookie_load_text(config, session, has_cookie),
+                input_style=True,
+                edit_value=_cookie_edit_value(config),
+            ),
+        )
     else:
         items.insert(
             3,
             MenuItem(
                 "import_cookie",
                 "Cookie",
-                _build_cookie_load_text(session, has_cookie),
+                _build_cookie_load_text(config, session, has_cookie),
                 item_type="action",
             ),
         )
@@ -419,16 +463,27 @@ def _build_main_menu_items(config: AppConfig, session: SessionState, rate_limit_
     return items
 
 
-def _build_cookie_load_text(session: SessionState, has_cookie: bool) -> str:
+def _build_cookie_load_text(config: AppConfig, session: SessionState, has_cookie: bool) -> str:
     """构造 Cookie 载入状态文案。"""
-    if not has_cookie:
-        return "未加载，可从浏览器读取"
-    source = (session.cookie_source_label or "").strip()
-    if not source:
-        return "已加载，可从浏览器重新读取"
-    if source == "配置文件":
-        return "已从配置文件加载，可从浏览器重新读取"
-    return f"已从浏览器加载（{source}），可重新读取"
+    from core_modules.console.state.view import build_cookie_load_text
+    return build_cookie_load_text(
+        config,
+        session,
+        has_cookie=has_cookie,
+        browser_cookie_import_supported=_supports_browser_cookie_import(),
+    )
+
+
+def _configured_cookie_value(config: AppConfig) -> str:
+    """返回用户实际配置的 Cookie，过滤掉默认占位符。"""
+    from core_modules.console.state.view import configured_cookie_value
+    return configured_cookie_value(config)
+
+
+def _cookie_edit_value(config: AppConfig) -> str:
+    """返回 Cookie 输入框初始值。"""
+    from core_modules.console.state.view import cookie_edit_value
+    return cookie_edit_value(config)
 
 
 def _run_advanced_settings_menu(config: AppConfig, session: SessionState) -> bool:
@@ -527,10 +582,10 @@ def _append_console_event(event: str, **fields: object) -> None:
 
 
 def _build_status_detail(rate_limit_summary: str, error_text: str) -> str:
-    """按优先级拼装状态详情文案。
+    """按显示顺序拼装状态详情文案。
 
     说明:
-        该函数主要供单元测试和潜在调试场景复用，因此继续保留在主入口模块。
+        该函数供单元测试和调试场景复用，因此继续保留在主入口模块。
     """
     if error_text:
         return f"详情: {_dedupe_error_text('', error_text)}"

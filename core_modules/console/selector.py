@@ -9,6 +9,7 @@ from core_modules.console.menu import (
     _display_width,
     _enable_keypad,
     _filter_cursor_x,
+    _is_enter_key,
     _is_escape_key,
     _is_screen_too_small,
     _layout_frame,
@@ -16,6 +17,22 @@ from core_modules.console.menu import (
     _render_screen_too_small,
 )
 from core_modules.export.models import TocNode
+
+try:
+    from core_modules.console.menu import _read_key as _backend_read_key
+except ImportError:  # Unix 后端使用阻塞读取，不提供轮询读键封装。
+    _backend_read_key = None
+
+try:
+    from core_modules.console.menu import _is_up_key as _backend_is_up_key
+    from core_modules.console.menu import _is_down_key as _backend_is_down_key
+    from core_modules.console.menu import _is_left_key as _backend_is_left_key
+    from core_modules.console.menu import _is_right_key as _backend_is_right_key
+except ImportError:  # Unix 后端的 curses 键码可直接比较。
+    _backend_is_up_key = None
+    _backend_is_down_key = None
+    _backend_is_left_key = None
+    _backend_is_right_key = None
 
 
 @dataclass(slots=True)
@@ -52,29 +69,34 @@ def select_doc_ids(nodes: list[TocNode], initial_selected: set[int] | None = Non
 
     def run(stdscr) -> set[int]:
         _enable_keypad(stdscr)
-        curses.curs_set(0)
+        _configure_selector_timeout(stdscr)
+        _set_cursor(0)
         while True:
             height, width = stdscr.getmaxyx()
             if _is_screen_too_small(height, width):
                 _render_screen_too_small(stdscr, title="选择文档", height=height, width=width)
                 stdscr.refresh()
-                key = stdscr.get_wch()
-                if key == "\x1b":
+                key = _read_selector_key(stdscr, wide=True)
+                if key == -1:
+                    continue
+                if _is_escape_key(key):
                     return state.selected
                 continue
             _render(stdscr, state)
-            key = stdscr.get_wch()
-            if key == curses.KEY_UP:
+            key = _read_selector_key(stdscr, wide=True)
+            if key == -1:
+                continue
+            if _is_up_key(key):
                 _move_cursor(state, -1)
-            elif key == curses.KEY_DOWN:
+            elif _is_down_key(key):
                 _move_cursor(state, 1)
-            elif key == curses.KEY_LEFT:
+            elif _is_left_key(key):
                 _collapse_current(state)
-            elif key == curses.KEY_RIGHT:
+            elif _is_right_key(key):
                 _expand_current(state)
-            elif key == curses.KEY_NPAGE:
+            elif _is_page_down_key(key):
                 _page_down(stdscr, state)
-            elif key == curses.KEY_PPAGE:
+            elif _is_page_up_key(key):
                 _page_up(stdscr, state)
             elif key == "g":
                 state.index = 0
@@ -88,12 +110,71 @@ def select_doc_ids(nodes: list[TocNode], initial_selected: set[int] | None = Non
                 state.selected.clear()
             elif key == "/":
                 _prompt_filter(stdscr, state)
-            elif key in ("\n", "\r"):
+            elif _is_enter_key(key):
                 return state.selected
-            elif key == "\x1b":
+            elif _is_escape_key(key):
                 return state.selected
 
     return curses.wrapper(run)
+
+
+def _read_selector_key(stdscr, *, wide: bool = False):
+    """读取选择器按键；Windows 轮询无输入时返回 -1 而不是抛出 ``no input``。"""
+    if _backend_read_key is not None:
+        return _backend_read_key(stdscr, wide=wide)
+    try:
+        if wide and hasattr(stdscr, "get_wch"):
+            return stdscr.get_wch()
+        return stdscr.getch()
+    except curses.error:
+        return -1
+
+
+def _configure_selector_timeout(stdscr) -> None:
+    """Windows 后端使用短轮询；Unix/macOS 保持阻塞读取体验。"""
+    try:
+        stdscr.timeout(100 if _backend_read_key is not None else -1)
+    except (AttributeError, curses.error):
+        return
+
+
+def _set_cursor(visibility: int) -> None:
+    try:
+        curses.curs_set(visibility)
+    except (AttributeError, curses.error):
+        return
+
+
+def _is_up_key(key) -> bool:
+    if _backend_is_up_key is not None:
+        return _backend_is_up_key(key)
+    return key == curses.KEY_UP
+
+
+def _is_down_key(key) -> bool:
+    if _backend_is_down_key is not None:
+        return _backend_is_down_key(key)
+    return key == curses.KEY_DOWN
+
+
+def _is_left_key(key) -> bool:
+    if _backend_is_left_key is not None:
+        return _backend_is_left_key(key)
+    return key == curses.KEY_LEFT
+
+
+def _is_right_key(key) -> bool:
+    if _backend_is_right_key is not None:
+        return _backend_is_right_key(key)
+    return key == curses.KEY_RIGHT
+
+
+def _is_page_down_key(key) -> bool:
+    return key == getattr(curses, "KEY_NPAGE", 338) or key == 338
+
+
+def _is_page_up_key(key) -> bool:
+    return key == getattr(curses, "KEY_PPAGE", 339) or key == 339
 
 
 def _collect_expandable_keys(nodes: list[TocNode]) -> set[str]:
@@ -124,12 +205,7 @@ def _refresh_items(state: _SelectorState) -> None:
 
 
 def _flatten_subtree(nodes: list[TocNode], depth: int = 0) -> list[_MenuItem]:
-    """展开整棵子树。
-
-    说明:
-        当过滤词直接命中目录名时，界面应展示该目录下的全部子项，而不受用户当前展开
-        状态影响。
-    """
+    """展开整棵子树，用于目录名命中过滤词的场景。"""
     items: list[_MenuItem] = []
     for node in nodes:
         key = _node_key(node)
@@ -141,11 +217,11 @@ def _flatten_subtree(nodes: list[TocNode], depth: int = 0) -> list[_MenuItem]:
 
 
 def _flatten_visible(nodes: list[TocNode], expanded_keys: set[str], depth: int = 0, filter_text: str = "") -> list[_MenuItem]:
-    """按当前展开状态和过滤词生成可见节点列表。
+    """按展开状态和过滤词生成可见节点列表。
 
     规则:
         1. 无过滤词时，严格按照用户展开状态渲染。
-        2. 过滤词命中目录名时，强制展开该目录整棵子树，便于直接查看目录下文档。
+        2. 过滤词命中目录名时，展开该目录整棵子树。
         3. 过滤词命中深层文档时，即使上层目录原本折叠，也会沿路径自动展开。
     """
     items: list[_MenuItem] = []
@@ -399,15 +475,19 @@ def _render_filter_prompt(stdscr, *, left: int, height: int, content_width: int,
     prompt = f"过滤: {''.join(chars)}"
     _draw_text(stdscr, height - 1, left, " " * max(0, content_width), width=content_width, attrs=curses.A_DIM)
     _draw_text(stdscr, height - 1, left, prompt, width=content_width, attrs=curses.A_DIM)
-    stdscr.move(height - 1, _filter_cursor_x(left, content_width, chars, cursor))
+    try:
+        stdscr.move(height - 1, _filter_cursor_x(left, content_width, chars, cursor))
+    except curses.error:
+        return
 
 
 def _prompt_filter(stdscr, state: _SelectorState) -> None:
     chars = list(state.filter_text)
     cursor = len(chars)
     _enable_keypad(stdscr)
+    _configure_selector_timeout(stdscr)
     while True:
-        curses.curs_set(1)
+        _set_cursor(1)
         _render(stdscr, state)
         height, width = stdscr.getmaxyx()
         content_width, left, _top, _divider_row = _layout_frame(
@@ -419,14 +499,16 @@ def _prompt_filter(stdscr, state: _SelectorState) -> None:
             [],
         )
         _render_filter_prompt(stdscr, left=left, height=height, content_width=content_width, chars=chars, cursor=cursor)
-        key = stdscr.get_wch()
-        if key in ("\n", "\r"):
+        key = _read_selector_key(stdscr, wide=True)
+        if key == -1:
+            continue
+        if _is_enter_key(key):
             _set_filter_text(state, "".join(chars))
-            curses.curs_set(0)
+            _set_cursor(0)
             return
         if _is_escape_key(key):
             _set_filter_text(state, "")
-            curses.curs_set(0)
+            _set_cursor(0)
             return
         chars, cursor, handled = _apply_text_edit_key(key, chars, cursor)
         if handled:

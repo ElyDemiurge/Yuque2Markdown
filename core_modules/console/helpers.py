@@ -19,7 +19,7 @@ def parse_action(action: str | None) -> tuple[str, str | None]:
         一个二元组 ``(动作键, 编辑值)``。当 ``action`` 为空时，返回 ``("", None)``。
 
     说明:
-        该函数不抛出异常，调用方可直接按返回值分支处理。
+        该函数不抛出异常，调用方按返回值分支处理。
     """
     if action is None:
         return "", None
@@ -122,7 +122,7 @@ def filter_repos(repos: list[dict], filter_text: str) -> list[dict]:
         filter_text: 用户输入的过滤关键字。
 
     返回:
-        命中名称、命名空间或 slug 的知识库列表。若过滤词为空，则直接返回原列表。
+        命中名称、命名空间或 slug 的知识库列表。过滤词为空时返回原列表。
     """
     if not filter_text:
         return repos

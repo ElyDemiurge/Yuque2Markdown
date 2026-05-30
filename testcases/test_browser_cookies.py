@@ -5,7 +5,15 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-from core_modules.auth.browser_cookies import BrowserCookieSource, load_yuque_cookie_from_browsers
+from core_modules.auth.browser_cookies import (
+    BrowserCookieSource,
+    default_chromium_sources,
+    _decode_decrypted_cookie,
+    _encrypted_cookie_failure_message,
+    _read_cookies,
+    load_yuque_cookie_from_browsers,
+    supports_browser_cookie_import,
+)
 
 
 def _create_cookie_db(path: Path, rows: list[tuple[str, str, str, bytes, int]]) -> None:
@@ -80,6 +88,7 @@ def test_load_yuque_cookie_uses_decrypted_value(tmp_path: Path, monkeypatch) -> 
     cookie_db = tmp_path / "Chrome" / "Default" / "Network" / "Cookies"
     _create_cookie_db(cookie_db, [(".yuque.com", "_yuque_session", "", b"v10encrypted", 0)])
 
+    monkeypatch.setattr("platform.system", lambda: "Darwin")
     monkeypatch.setattr("core_modules.auth.browser_cookies._get_safe_storage_password", lambda _service: b"password")
     monkeypatch.setattr("core_modules.auth.browser_cookies._decrypt_macos_chromium_cookie", lambda *_args, **_kwargs: "session-value")
 
@@ -89,6 +98,17 @@ def test_load_yuque_cookie_uses_decrypted_value(tmp_path: Path, monkeypatch) -> 
     assert result.cookie == "_yuque_session=session-value"
 
 
+def test_default_chromium_sources_returns_no_windows_sources(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr("platform.system", lambda: "Windows")
+
+    assert default_chromium_sources(tmp_path) == []
+
+
+def test_supports_browser_cookie_import_only_on_macos() -> None:
+    assert supports_browser_cookie_import("Darwin") is True
+    assert supports_browser_cookie_import("Windows") is False
+
+
 def test_load_yuque_cookie_reports_missing_database(tmp_path: Path) -> None:
     result = load_yuque_cookie_from_browsers(sources=[BrowserCookieSource("Chrome", tmp_path / "Chrome", "Chrome Safe Storage")])
 
@@ -96,15 +116,24 @@ def test_load_yuque_cookie_reports_missing_database(tmp_path: Path) -> None:
     assert "未找到" in result.message
 
 
-def test_load_yuque_cookie_uses_windows_decryptor(tmp_path: Path, monkeypatch) -> None:
+def test_read_cookies_closes_copied_database_before_temp_cleanup(tmp_path: Path) -> None:
     cookie_db = tmp_path / "Chrome" / "Default" / "Network" / "Cookies"
-    _create_cookie_db(cookie_db, [(".yuque.com", "_yuque_session", "", b"v10encrypted", 0)])
+    _create_cookie_db(cookie_db, [(".yuque.com", "yuque_ctoken", "token-value", b"", 0)])
 
-    monkeypatch.setattr("platform.system", lambda: "Windows")
-    monkeypatch.setattr("core_modules.auth.browser_cookies._get_windows_chromium_key", lambda _root: b"windows-key")
-    monkeypatch.setattr("core_modules.auth.browser_cookies._decrypt_windows_chromium_cookie", lambda *_args, **_kwargs: "session-value")
+    cookies, encrypted_count = _read_cookies(
+        cookie_db,
+        domain="yuque.com",
+        safe_storage_password=None,
+    )
 
-    result = load_yuque_cookie_from_browsers(sources=[BrowserCookieSource("Chrome", tmp_path / "Chrome", "")])
+    assert cookies == [("yuque_ctoken", "token-value")]
+    assert encrypted_count == 0
 
-    assert result.ok is True
-    assert result.cookie == "_yuque_session=session-value"
+
+def test_decode_decrypted_cookie_strips_chromium_host_hash() -> None:
+    import hashlib
+
+    host_key = ".yuque.com"
+    raw = hashlib.sha256(host_key.encode("utf-8")).digest() + b"session-value"
+
+    assert _decode_decrypted_cookie(raw, host_key=host_key) == "session-value"

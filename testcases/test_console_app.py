@@ -53,9 +53,11 @@ def test_build_main_menu_items_adds_sections_and_readonly_not_focusable() -> Non
     assert all(item.focusable is False for item in readonly_items)
 
 
-def test_build_main_menu_items_shows_cookie_action_only_in_cookie_mode() -> None:
+def test_build_main_menu_items_shows_cookie_action_only_in_cookie_mode(monkeypatch) -> None:
     config = AppConfig(auth_mode="cookie")
     session = SessionState()
+
+    monkeypatch.setattr("core_modules.console.app.sys.platform", "darwin")
 
     items = _build_main_menu_items(config, session, "暂无")
     keys = [item.key for item in items]
@@ -68,9 +70,56 @@ def test_build_main_menu_items_shows_cookie_action_only_in_cookie_mode() -> None
     assert "token" not in keys
 
 
-def test_build_main_menu_items_shows_cookie_source_from_config() -> None:
+def test_build_main_menu_items_shows_cookie_input_on_windows(monkeypatch) -> None:
+    config = AppConfig(auth_mode="cookie", cookie="_yuque_session=demo; yuque_ctoken=token")
+    session = SessionState()
+
+    monkeypatch.setattr("core_modules.console.app.sys.platform", "win32")
+
+    items = _build_main_menu_items(config, session, "暂无")
+    keys = [item.key for item in items]
+    cookie_item = next(item for item in items if item.key == "cookie")
+
+    assert keys.index("auth_mode") < keys.index("cookie")
+    assert "import_cookie" not in keys
+    assert cookie_item.title == "设置 Cookie"
+    assert cookie_item.input_style is True
+    assert cookie_item.value == "_yuque_session=demo; yuque_ctoken=token"
+    assert cookie_item.edit_value == "_yuque_session=demo; yuque_ctoken=token"
+
+
+def test_build_main_menu_items_shows_cookie_empty_hint_on_windows(monkeypatch) -> None:
+    config = AppConfig(auth_mode="cookie")
+    session = SessionState()
+
+    monkeypatch.setattr("core_modules.console.app.sys.platform", "win32")
+
+    items = _build_main_menu_items(config, session, "暂无")
+    cookie_item = next(item for item in items if item.key == "cookie")
+
+    assert cookie_item.value == "未设置"
+    assert cookie_item.edit_value == "_yuque_session="
+
+
+def test_build_main_menu_items_treats_cookie_placeholder_as_empty_on_windows(monkeypatch) -> None:
+    config = AppConfig(auth_mode="cookie", cookie="_yuque_session=")
+    session = SessionState(cookie_source_label="配置文件")
+
+    monkeypatch.setattr("core_modules.console.app.sys.platform", "win32")
+
+    items = _build_main_menu_items(config, session, "暂无")
+    cookie_item = next(item for item in items if item.key == "cookie")
+
+    assert cookie_item.title == "设置 Cookie"
+    assert cookie_item.value == "未设置"
+    assert cookie_item.edit_value == "_yuque_session="
+
+
+def test_build_main_menu_items_shows_cookie_source_from_config(monkeypatch) -> None:
     config = AppConfig(auth_mode="cookie", cookie="demo-cookie")
     session = SessionState(cookie_source_label="配置文件")
+
+    monkeypatch.setattr("core_modules.console.app.sys.platform", "darwin")
 
     items = _build_main_menu_items(config, session, "暂无")
     import_item = next(item for item in items if item.key == "import_cookie")
@@ -78,9 +127,11 @@ def test_build_main_menu_items_shows_cookie_source_from_config() -> None:
     assert import_item.value == "已从配置文件加载，可从浏览器重新读取"
 
 
-def test_build_main_menu_items_shows_cookie_source_from_browser() -> None:
+def test_build_main_menu_items_shows_cookie_source_from_browser(monkeypatch) -> None:
     config = AppConfig(auth_mode="cookie", cookie="demo-cookie")
     session = SessionState(cookie_source_label="Chrome/Default")
+
+    monkeypatch.setattr("core_modules.console.app.sys.platform", "darwin")
 
     items = _build_main_menu_items(config, session, "暂无")
     import_item = next(item for item in items if item.key == "import_cookie")
@@ -186,6 +237,7 @@ def test_run_console_app_does_not_refresh_connection_on_startup(monkeypatch) -> 
         raise AssertionError("startup should not refresh connection")
 
     monkeypatch.setattr("core_modules.console.app.load_config", fake_load_config)
+    monkeypatch.setattr("core_modules.console.app.sys.platform", "darwin")
     monkeypatch.setattr("core_modules.console.app.run_menu", fake_run_menu)
     monkeypatch.setattr("core_modules.console.app._refresh_connection_state", fake_refresh_connection_state)
 
@@ -272,6 +324,43 @@ def test_run_console_app_imports_cookie_from_browser(monkeypatch) -> None:
     assert config.cookie == "yuque_ctoken=demo"
 
 
+def test_run_console_app_updates_cookie_from_manual_input_on_windows(monkeypatch) -> None:
+    config = AppConfig(auth_mode="cookie")
+    calls = {"count": 0}
+    captured_reason = ""
+
+    def fake_load_config() -> AppConfig:
+        return config
+
+    def fake_run_menu(title, items, **kwargs):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            cookie_item = next(item for item in items if item.key == "cookie")
+            assert cookie_item.input_style is True
+            return "cookie:_yuque_session=demo; yuque_ctoken=token"
+        return "exit"
+
+    def fake_import_cookie():
+        raise AssertionError("Windows should not read browser cookies automatically")
+
+    def fake_persist_config(cfg, session, reason):
+        nonlocal captured_reason
+        if reason == "cookie_changed":
+            captured_reason = reason
+        return cfg
+
+    monkeypatch.setattr("core_modules.console.app.sys.platform", "win32")
+    monkeypatch.setattr("core_modules.console.app.load_config", fake_load_config)
+    monkeypatch.setattr("core_modules.console.app.run_menu", fake_run_menu)
+    monkeypatch.setattr("core_modules.console.app.load_yuque_cookie_from_browsers", fake_import_cookie)
+    monkeypatch.setattr("core_modules.console.app._persist_config", fake_persist_config)
+
+    assert run_console_app() == 0
+    assert config.auth_mode == "cookie"
+    assert config.cookie == "_yuque_session=demo; yuque_ctoken=token"
+    assert captured_reason == "cookie_changed"
+
+
 def test_run_console_app_marks_cookie_as_loaded_from_config_on_startup(monkeypatch) -> None:
     config = AppConfig(auth_mode="cookie", cookie="yuque_ctoken=demo")
     captured: dict[str, object] = {}
@@ -284,6 +373,7 @@ def test_run_console_app_marks_cookie_as_loaded_from_config_on_startup(monkeypat
         return "exit"
 
     monkeypatch.setattr("core_modules.console.app.load_config", fake_load_config)
+    monkeypatch.setattr("core_modules.console.app.sys.platform", "darwin")
     monkeypatch.setattr("core_modules.console.app.run_menu", fake_run_menu)
 
     assert run_console_app() == 0
@@ -305,6 +395,7 @@ def test_run_console_app_switching_to_cookie_imports_when_empty(monkeypatch) -> 
         return "exit"
 
     monkeypatch.setattr("core_modules.console.app.load_config", fake_load_config)
+    monkeypatch.setattr("core_modules.console.app.sys.platform", "darwin")
     monkeypatch.setattr("core_modules.console.app.run_menu", fake_run_menu)
     monkeypatch.setattr(
         "core_modules.console.app.load_yuque_cookie_from_browsers",
@@ -315,6 +406,33 @@ def test_run_console_app_switching_to_cookie_imports_when_empty(monkeypatch) -> 
     assert run_console_app() == 0
     assert config.auth_mode == "cookie"
     assert config.cookie == "yuque_ctoken=demo"
+
+
+def test_run_console_app_switching_to_cookie_does_not_import_on_windows(monkeypatch) -> None:
+    config = AppConfig()
+    calls = {"count": 0}
+
+    def fake_load_config() -> AppConfig:
+        return config
+
+    def fake_run_menu(title, items, **kwargs):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return "auth_mode_cookie"
+        return "exit"
+
+    def fake_import_cookie():
+        raise AssertionError("Windows should ask for manual Cookie input instead of browser import")
+
+    monkeypatch.setattr("core_modules.console.app.sys.platform", "win32")
+    monkeypatch.setattr("core_modules.console.app.load_config", fake_load_config)
+    monkeypatch.setattr("core_modules.console.app.run_menu", fake_run_menu)
+    monkeypatch.setattr("core_modules.console.app.load_yuque_cookie_from_browsers", fake_import_cookie)
+    monkeypatch.setattr("core_modules.console.app._persist_config", lambda cfg, session, reason: cfg)
+
+    assert run_console_app() == 0
+    assert config.auth_mode == "cookie"
+    assert config.cookie == ""
 
 
 def test_run_console_app_switching_cookie_to_token_keeps_focus_on_auth_mode(monkeypatch) -> None:
@@ -337,6 +455,7 @@ def test_run_console_app_switching_cookie_to_token_keeps_focus_on_auth_mode(monk
         return "exit"
 
     monkeypatch.setattr("core_modules.console.app.load_config", fake_load_config)
+    monkeypatch.setattr("core_modules.console.app.sys.platform", "darwin")
     monkeypatch.setattr("core_modules.console.app.run_menu", fake_run_menu)
     monkeypatch.setattr("core_modules.console.app._refresh_connection_state", lambda *args, **kwargs: None)
     monkeypatch.setattr("core_modules.console.app._persist_config", lambda cfg, session, reason: cfg)
@@ -367,6 +486,7 @@ def test_run_console_app_switching_token_to_cookie_keeps_focus_on_auth_mode(monk
         return "exit"
 
     monkeypatch.setattr("core_modules.console.app.load_config", fake_load_config)
+    monkeypatch.setattr("core_modules.console.app.sys.platform", "darwin")
     monkeypatch.setattr("core_modules.console.app.run_menu", fake_run_menu)
     monkeypatch.setattr(
         "core_modules.console.app.load_yuque_cookie_from_browsers",

@@ -44,7 +44,7 @@ def render_doc_markdown(
 
 
 def convert_doc_to_markdown(doc_data: dict) -> str:
-    """便捷包装：直接返回 Markdown 字符串。"""
+    """返回 Markdown 字符串，兼容旧调用入口。"""
     return render_doc_markdown(doc_data).markdown
 
 
@@ -59,17 +59,15 @@ def maybe_prepend_title(content: str, title: str, *, prepend_title: bool) -> str
     lines = [line for line in normalized.splitlines() if line.strip()]
     first_line = lines[0] if lines else ""
 
-    # 检测是否已有 H1 标题匹配文档名（来自其他来源，如 body 字段）
+    # body/content 回退内容可能已经带有文档标题。
     if first_line.startswith("# ") and first_line[2:].strip() == title.strip():
         return normalized
 
-    # 检测是否已有 H2 标题匹配文档名（来自 lake 原始 H1，已递增为 H2）
+    # lake 原始 H1 会递增为 H2，匹配时替换为统一的文档 H1。
     if first_line.startswith("## ") and first_line[3:].strip() == title.strip():
-        # 移除重复的 H2 标题，保留后续内容
         remaining = "\n".join(lines[1:]) if len(lines) > 1 else ""
         return f"# {title}\n\n{remaining}" if remaining else f"# {title}"
 
-    # 无匹配标题，正常添加 H1 文档标题
     return f"# {title}\n\n{normalized}" if normalized else f"# {title}"
 
 
@@ -111,7 +109,7 @@ def _render_lake_document(text: str) -> tuple[str, list[str]]:
     source = re.sub(r"<meta\b[^>]*/?>", "", source, flags=re.I)
     source = re.sub(r"<br\s*/?>", "<br />", source, flags=re.I)
 
-    # void HTML 元素转自闭合形式，避免 XML 解析错误
+    # XML 解析器要求 void HTML 元素显式自闭合。
     void_elements = "|".join(["area", "base", "col", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"])
     source = re.sub(rf"<({void_elements})\b([^>]*)(?<!/)>", r"<\1\2/>", source, flags=re.I)
 
@@ -186,8 +184,7 @@ def _render_lakesheet_document(text: str) -> tuple[str, list[str]]:
 def _render_lake_block(element: ET.Element, *, warnings: list[str], list_indent: int = 0) -> str:
     tag = _lake_tag_name(element)
     if tag in {"h1", "h2", "h3", "h4", "h5", "h6"}:
-        # 标题层级递增：文档标题为 H1，内容中的标题从 H2 开始
-        # 原 h1 → h2，原 h2 → h3，以此类推
+        # 文档标题占用 H1，正文标题整体后移一层。
         original_level = int(tag[1])
         level = original_level + 1
         text = _render_lake_inline(element, warnings=warnings).strip()
@@ -199,8 +196,7 @@ def _render_lake_block(element: ET.Element, *, warnings: list[str], list_indent:
         return f"{'#' * level} {text}" if text else ""
 
     if tag == "p":
-        # 检测是否整个段落都是 <strong> 包裹（连续的 strong 或 code+strong 序列）
-        # 这种情况应合并为一个 Markdown 加粗块
+        # 整段加粗需要合并，避免输出断开的 `**...**` 序列。
         if _is_all_strong_wrapped(element):
             text = _extract_merged_strong_content(element, warnings=warnings).strip()
             return f"**{text}**" if text else ""
@@ -233,16 +229,13 @@ def _render_lake_block(element: ET.Element, *, warnings: list[str], list_indent:
         return f"[{text}]({href})" if href else text
 
     if tag == "span":
-        # span 标签直接渲染为行内内容，保留颜色等样式
         return _render_lake_inline(element, warnings=warnings, _wrap_tags=True)
 
     if tag == "table":
-        # 将 HTML 表格转换为 Markdown 表格
         html_content = ET.tostring(element, encoding="unicode") if hasattr(ET, "tostring") else ""
         return _html_table_to_markdown(html_content, warnings=warnings)
 
-    # 表格相关的子标签（tr、td、th、tbody 等）由 table 的递归处理覆盖
-    # 静默忽略，不产生警告
+    # 表格子标签由 table 递归处理覆盖，这里不重复告警。
     if tag in {"tbody", "thead", "tfoot", "tr", "td", "th", "colgroup", "caption"}:
         parts: list[str] = []
         for child in element:
@@ -252,7 +245,6 @@ def _render_lake_block(element: ET.Element, *, warnings: list[str], list_indent:
         return "\n\n".join(parts)
 
     if tag == "u":
-        # Markdown 不原生支持下划线，保留为 HTML <u> 标签
         text = _render_lake_inline(element, warnings=warnings, _wrap_tags=False).strip()
         return f"<u>{text}</u>" if text else ""
 
@@ -345,8 +337,7 @@ def _render_lake_inline(element: ET.Element, *, warnings: list[str], _wrap_tags:
     """
     tag = _lake_tag_name(element)
 
-    # <code> 元素特殊处理：内部不应有格式标记，只取纯文本和颜色
-    # 直接返回，不递归处理子元素
+    # <code> 内部只取纯文本和颜色，避免嵌套格式污染代码内容。
     if tag == "code":
         code_color = _extract_color_style(element) or _extract_nested_color(element)
         code_text = _get_element_text(element).strip()
@@ -364,7 +355,6 @@ def _render_lake_inline(element: ET.Element, *, warnings: list[str], _wrap_tags:
         if child_tag == "br":
             parts.append("\n")
         elif child_tag == "span":
-            # 检查是否有颜色样式，保留为 HTML span 标签
             color = _extract_color_style(child)
             if color:
                 inner_text = _get_element_text(child)
@@ -378,7 +368,6 @@ def _render_lake_inline(element: ET.Element, *, warnings: list[str], _wrap_tags:
         elif child_tag == "card":
             parts.append(_render_lake_card(child, warnings=warnings))
         else:
-            # 其他标签递归处理（包括 strong、em、code 等）
             parts.append(_render_lake_inline(child, warnings=warnings, _wrap_tags=True))
         if child.tail:
             parts.append(html.unescape(child.tail))
@@ -388,7 +377,6 @@ def _render_lake_inline(element: ET.Element, *, warnings: list[str], _wrap_tags:
     text = re.sub(r"[ \t]+", " ", text)
     text = re.sub(r" *\n *", "\n", text)
 
-    # 根据当前元素标签包装输出（仅当 _wrap_tags=True 时）
     if _wrap_tags:
         text = text.strip()
         if tag == "strong":
@@ -396,7 +384,6 @@ def _render_lake_inline(element: ET.Element, *, warnings: list[str], _wrap_tags:
         if tag in {"em", "i"}:
             return f"*{text}*" if text else ""
         if tag == "u":
-            # Markdown 不原生支持下划线，保留为 HTML <u> 标签
             return f"<u>{text}</u>" if text else ""
 
     return text
@@ -406,18 +393,16 @@ def _render_lake_card(element: ET.Element, *, warnings: list[str]) -> str:
     name = str(element.attrib.get("name") or "").strip().lower()
     value = element.attrib.get("value") or ""
 
-    # hr card 不需要 payload，直接渲染
+    # 这些 card 的内容来自属性或固定语义，不需要解码 payload。
     if name == "hr":
         return "---\n"
 
-    # mention card 直接从属性获取用户名，不需要解码 payload
     if name == "mention":
         user_name = element.attrib.get("data-name") or ""
         if user_name:
             return f"@{user_name}"
         return ""
 
-    # bookmarklink card 从属性获取链接
     if name == "bookmarklink":
         href = element.attrib.get("href") or ""
         title = element.attrib.get("title") or href
@@ -425,7 +410,7 @@ def _render_lake_card(element: ET.Element, *, warnings: list[str]) -> str:
             return f"[{title}]({href})"
         return ""
 
-    # lockedtext card 是加密内容，静默跳过
+    # lockedtext 是加密内容，无法导出明文。
     if name == "lockedtext":
         return ""
 
@@ -478,7 +463,6 @@ def _render_lake_card(element: ET.Element, *, warnings: list[str]) -> str:
         link_text = fname or src
         if src:
             return f"[{link_text}]({src})"
-        # 只有在有文件名时才输出占位符，否则静默跳过
         if fname:
             return f"[{fname}]"
         return ""
@@ -503,7 +487,7 @@ def _render_code_block(language: str, code: str) -> str:
     在 Markdown fenced code block（```...```）内部，< > & 等字符
     不需要 HTML 转义，解析器会原样显示代码内容。
     """
-    # 只解码已有的 HTML 实体（语雀可能已编码），然后保持原始字符
+    # 只解码已有 HTML 实体，保留代码里的原始字符。
     unescaped = html.unescape(code)
     return f"```{language}\n{unescaped.rstrip()}\n```"
 
@@ -512,7 +496,7 @@ def _decode_lake_card_value(value: str, *, warnings: list[str], name: str) -> di
     raw = value.strip()
     if raw.startswith("data:"):
         raw = raw[5:]
-    # 跳过空值和 undefined（hr card 常用 data:undefined）
+    # 空值和 data:undefined 没有可解码 payload。
     if not raw or raw == "undefined":
         return None
     try:
@@ -526,12 +510,10 @@ def _decode_lake_card_value(value: str, *, warnings: list[str], name: str) -> di
 
 def _check_lake_conversion_completeness(content: str) -> list[str]:
     warnings: list[str] = []
-    # 检查真正的转换遗留：未处理的 card 标签和 data-lake-id 属性
-    # 注意：不检查 p/span 等标签的正则匹配，因为这些可能是文章正文中出现的 HTML 标签文本（如"请看上面的 <P> 标签"）
+    # 只检查高风险残留；p/span 可能是正文中的普通 HTML 文本。
     residual_patterns = [r"<card\b", r"data-lake-id="]
     if not any(re.search(pattern, content, flags=re.I) for pattern in residual_patterns):
         return warnings
-    # 排除代码块内的匹配
     safe = re.sub(r"```[\s\S]*?```", "", content)
     if any(re.search(pattern, safe, flags=re.I) for pattern in residual_patterns):
         warnings.append("Lake 转换后仍残留原始标签，请结合 .lake 文件检查")
@@ -566,7 +548,6 @@ def _extract_color_style(element: ET.Element) -> str | None:
     style = element.attrib.get("style") or ""
     if not style:
         return None
-    # 解析 style 属性，查找 color 定义
     for part in style.split(";"):
         part = part.strip()
         if part.startswith("color:"):
@@ -588,14 +569,11 @@ def _is_all_strong_wrapped(element: ET.Element) -> bool:
             has_strong = True
             continue
         if child_tag == "code":
-            # code 内部是否有 strong
             inner_strong = any(_lake_tag_name(c) == "strong" for c in child)
             if inner_strong:
                 has_strong = True
                 continue
-        # 有非 strong/code 元素，或者纯 code（无内部 strong），则不合并
         return False
-    # 段落开头/结尾的纯文本也应该参与判断
     if element.text and element.text.strip():
         return False
     return has_strong
@@ -617,10 +595,8 @@ def _extract_strong_sequence_content(element: ET.Element, *, warnings: list[str]
     for child in element:
         child_tag = _lake_tag_name(child)
         if child_tag == "strong":
-            # strong 内部可能嵌套 code/span，需要递归处理
             parts.append(_extract_strong_sequence_content(child, warnings=warnings))
         elif child_tag == "code":
-            # code 内部可能有带颜色的 span（如 <code><strong><span style="color: ...">）
             code_color = _extract_nested_color(child)
             code_text = _get_element_text(child).strip()
             if code_text:
@@ -629,7 +605,6 @@ def _extract_strong_sequence_content(element: ET.Element, *, warnings: list[str]
                 else:
                     parts.append(f"`{code_text}`")
         elif child_tag == "span":
-            # span 可能有颜色样式
             color = _extract_color_style(child)
             if color:
                 inner_text = _get_element_text(child)
@@ -637,7 +612,6 @@ def _extract_strong_sequence_content(element: ET.Element, *, warnings: list[str]
             else:
                 parts.append(_get_element_text(child))
         else:
-            # 其他元素取纯文本
             parts.append(_get_element_text(child))
         if child.tail:
             parts.append(html.unescape(child.tail))
@@ -646,11 +620,9 @@ def _extract_strong_sequence_content(element: ET.Element, *, warnings: list[str]
 
 def _extract_nested_color(element: ET.Element) -> str | None:
     """从嵌套元素中提取颜色样式（如 <code><strong><span style="color: ...">）。"""
-    # 直接检查当前元素
     color = _extract_color_style(element)
     if color:
         return color
-    # 递归检查子元素
     for child in element:
         child_color = _extract_nested_color(child)
         if child_color:
@@ -750,7 +722,7 @@ def _render_lake_video(element: ET.Element, *, warnings: list[str]) -> str:
 
 
 def _render_lake_board(payload: dict) -> str:
-    """转换 board card，优先输出思维导图文本，再保留整图链接。"""
+    """转换 board card，先输出思维导图文本，再保留整图链接。"""
     outline = _render_board_outline(payload.get("diagramData", {}).get("body", []))
     src = str(payload.get("src") or "").strip()
     parts: list[str] = []
@@ -849,7 +821,7 @@ def _normalize_board_text(value: object) -> str:
 
 
 def _render_missing_image_placeholder(payload: dict, alt: str) -> str:
-    """为无法恢复的图片卡保留一个可见占位，避免正文内容直接断掉。"""
+    """为无法恢复的图片卡保留可见占位，避免正文内容断掉。"""
     name = str(payload.get("name") or "").strip()
     original_type = str(payload.get("originalType") or "").strip().lower()
     error_message = str(payload.get("errorMessage") or "").strip()

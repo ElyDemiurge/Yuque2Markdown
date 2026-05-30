@@ -163,7 +163,7 @@ def is_attachment_url(url: str) -> bool:
     CDN 域名（www.nlark.com/yuque/、yuqueusercontent.com、aliyuncs.com），
     不匹配普通语雀文档页面链接。
 
-    这里的职责只是“识别附件链接”，并不代表当前版本一定会将其下载到本地。
+    这里的职责只是“识别附件链接”，不决定附件是否下载到本地。
     """
     parsed = _safe_urlparse(url.strip())
     if parsed is None:

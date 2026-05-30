@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from core_modules.config.models import AUTH_MODE_COOKIE, AppConfig, SessionState, auth_mode_label, normalize_auth_mode, summarize_attachment_suffixes
 from core_modules.config.store import config_path
+from core_modules.config.store import DEFAULT_COOKIE_PLACEHOLDER
 
 
 def bool_text(value: bool) -> str:
@@ -19,6 +20,44 @@ def mask_token(token: str) -> str:
     if not token:
         return "未设置"
     return "******" + token[-4:] if len(token) > 4 else "******"
+
+
+def build_main_title(session: SessionState, app_version: str) -> str:
+    """构造主界面标题，必要时追加未保存标记。"""
+    base = f"Yuque2Markdown {app_version} 控制台"
+    return f"{base} [未保存]" if session.dirty else base
+
+
+def configured_cookie_value(config: AppConfig) -> str:
+    """返回用户实际配置的 Cookie，过滤掉默认占位符。"""
+    cookie = (config.cookie or "").strip()
+    return "" if cookie == DEFAULT_COOKIE_PLACEHOLDER else cookie
+
+
+def cookie_edit_value(config: AppConfig) -> str:
+    """返回 Cookie 输入框初始值。"""
+    cookie = configured_cookie_value(config)
+    return cookie or DEFAULT_COOKIE_PLACEHOLDER
+
+
+def build_cookie_load_text(
+    config: AppConfig,
+    session: SessionState,
+    *,
+    has_cookie: bool,
+    browser_cookie_import_supported: bool,
+) -> str:
+    """构造 Cookie 载入状态文案。"""
+    if not has_cookie:
+        return "未设置" if not browser_cookie_import_supported else "未加载，可从浏览器读取"
+    source = (session.cookie_source_label or "").strip()
+    if not browser_cookie_import_supported:
+        return configured_cookie_value(config)
+    if not source:
+        return "已加载，可从浏览器重新读取"
+    if source == "配置文件":
+        return "已从配置文件加载，可从浏览器重新读取"
+    return f"已从浏览器加载（{source}），可重新读取"
 
 
 def _confirm_value_line(label: str, value: str) -> str:
@@ -230,7 +269,7 @@ def build_status_lines(config: AppConfig, session: SessionState, rate_limit_summ
         token_color = ""
         token_status = f"未设置 {auth_label}"
 
-    # 知识库状态优先显示带名称的命名空间，其次回退到原始输入。
+    # 知识库状态先显示带名称的命名空间，其次回退到原始输入。
     if session.repo_namespace:
         repo_status = f"{session.repo_display_name or session.repo_namespace}"
     elif session.repo_input:
@@ -238,7 +277,7 @@ def build_status_lines(config: AppConfig, session: SessionState, rate_limit_summ
     else:
         repo_status = "未选择"
 
-    # 如果用户没有显式勾选文档，则展示当前知识库的总文档数。
+    # 用户没有显式勾选文档时，展示知识库的总文档数。
     if session.selected_doc_ids:
         scope_status = f"已选 {len(session.selected_doc_ids)} 篇"
     elif session.selected_doc_count:

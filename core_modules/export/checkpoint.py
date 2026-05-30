@@ -43,7 +43,7 @@ def load_checkpoint(output_dir: Path) -> CheckpointState | None:
         return None
     data = json.loads(path.read_text(encoding="utf-8"))
     raw_doc_states = data.get("doc_states", {})
-    # JSON 中的文档状态需要还原为 dataclass，便于后续代码按对象访问字段。
+    # JSON 中的文档状态还原为 dataclass，便于按对象访问字段。
     data["doc_states"] = {key: DocExportState(**value) for key, value in raw_doc_states.items()}
     return CheckpointState(**data)
 

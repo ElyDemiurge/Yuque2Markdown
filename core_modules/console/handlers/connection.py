@@ -118,7 +118,7 @@ def refresh_connection_state(
         error_str = str(exc)
         proxy = config.export_defaults.proxy
         if proxy.enabled and proxy.host:
-            # 主请求失败后补做一次代理连通性检查，尽量给出更明确的失败原因。
+            # 主请求失败后补做一次代理连通性检查，给出更明确的失败原因。
             client = build_client_from_config(config, token, timeout=config.export_defaults.token_check_timeout, max_retries=1)
             proxy_ok, proxy_msg = client.test_proxy()
             if not proxy_ok:

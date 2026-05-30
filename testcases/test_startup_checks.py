@@ -8,20 +8,29 @@ import locale
 import yuque2markdown
 
 
-def test_check_runtime_support_reports_windows_unsupported(monkeypatch) -> None:
+def test_check_runtime_support_accepts_windows_with_curses(monkeypatch) -> None:
     monkeypatch.setattr(yuque2markdown.sys, "platform", "win32")
 
     message = yuque2markdown.check_runtime_support()
 
-    assert message == "当前版本仅支持 macOS 运行"
+    assert message == ""
 
 
-def test_check_runtime_support_reports_non_macos_unsupported(monkeypatch) -> None:
+def test_check_runtime_support_reports_missing_curses_on_windows(monkeypatch) -> None:
+    original_import_module = importlib.import_module
+
+    def fake_import_module(name: str):
+        if name == "curses":
+            raise ImportError("No module named '_curses'")
+        return original_import_module(name)
+
     monkeypatch.setattr(yuque2markdown.sys, "platform", "win32")
+    monkeypatch.setattr(yuque2markdown.importlib, "import_module", fake_import_module)
 
     message = yuque2markdown.check_runtime_support()
 
-    assert message == "当前版本仅支持 macOS 运行"
+    assert "windows-curses" in message
+    assert "No module named '_curses'" in message
 
 
 def test_check_runtime_support_reports_linux_unsupported(monkeypatch) -> None:
@@ -29,7 +38,7 @@ def test_check_runtime_support_reports_linux_unsupported(monkeypatch) -> None:
 
     message = yuque2markdown.check_runtime_support()
 
-    assert message == "当前版本仅支持 macOS 运行"
+    assert message == "当前版本仅支持 macOS 或 Windows 运行"
 
 
 def test_check_runtime_support_reports_missing_curses_on_macos(monkeypatch) -> None:
@@ -53,3 +62,26 @@ def test_configure_console_locale_ignores_locale_error(monkeypatch) -> None:
     monkeypatch.setattr(yuque2markdown.locale, "setlocale", lambda *_args, **_kwargs: (_ for _ in ()).throw(locale.Error("boom")))
 
     yuque2markdown.configure_console_locale()
+
+
+def test_configure_standard_stream_encoding_reconfigures_streams(monkeypatch) -> None:
+    class DummyStream:
+        def __init__(self) -> None:
+            self.calls = []
+
+        def reconfigure(self, **kwargs) -> None:
+            self.calls.append(kwargs)
+
+    stdin = DummyStream()
+    stdout = DummyStream()
+    stderr = DummyStream()
+    monkeypatch.setattr(yuque2markdown.sys, "stdin", stdin)
+    monkeypatch.setattr(yuque2markdown.sys, "stdout", stdout)
+    monkeypatch.setattr(yuque2markdown.sys, "stderr", stderr)
+    monkeypatch.delenv("PYTHONUTF8", raising=False)
+
+    yuque2markdown.configure_standard_stream_encoding()
+
+    assert stdin.calls == [{"encoding": "utf-8", "errors": "replace"}]
+    assert stdout.calls == [{"encoding": "utf-8", "errors": "replace"}]
+    assert stderr.calls == [{"encoding": "utf-8", "errors": "replace"}]

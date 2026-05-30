@@ -6,6 +6,7 @@ from core_modules.console.selector import (
     _collect_expandable_keys,
     _flatten_visible,
     _node_key,
+    _read_selector_key,
     _set_filter_text,
     _truncate,
     select_doc_ids,
@@ -23,6 +24,16 @@ def test_selector_accepts_initial_selected() -> None:
     assert len(defaults) == 2
     assert defaults[0] is None
     assert defaults[1] is None
+
+
+def test_selector_read_key_treats_no_input_as_empty_poll() -> None:
+    import curses
+
+    class DummyWindow:
+        def get_wch(self):
+            raise curses.error("no input")
+
+    assert _read_selector_key(DummyWindow(), wide=True) == -1
 
 
 def test_selector_can_flatten_with_collapsed_directory() -> None:

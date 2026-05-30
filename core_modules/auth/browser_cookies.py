@@ -2,12 +2,7 @@
 
 from __future__ import annotations
 
-import base64
-import ctypes
-import ctypes.wintypes
 import hashlib
-import json
-import os
 import platform
 import shutil
 import sqlite3
@@ -44,18 +39,17 @@ class BrowserCookieResult:
         return bool(self.cookie)
 
 
+def supports_browser_cookie_import(system_name: str | None = None) -> bool:
+    """平台是否支持读取 Chromium 浏览器 Cookie。"""
+    return (system_name or platform.system()) == "Darwin"
+
+
 def default_chromium_sources(home: Path | None = None) -> list[BrowserCookieSource]:
     """返回常见 Chromium 系浏览器的 Cookie 目录。"""
 
     root = home or Path.home()
-    if platform.system() == "Windows":
-        local_app_data = Path(os.environ.get("LOCALAPPDATA", root / "AppData" / "Local"))
-        return [
-            BrowserCookieSource("Chrome", local_app_data / "Google" / "Chrome" / "User Data", ""),
-            BrowserCookieSource("Edge", local_app_data / "Microsoft" / "Edge" / "User Data", ""),
-            BrowserCookieSource("Brave", local_app_data / "BraveSoftware" / "Brave-Browser" / "User Data", ""),
-            BrowserCookieSource("Chromium", local_app_data / "Chromium" / "User Data", ""),
-        ]
+    if not supports_browser_cookie_import():
+        return []
     app_support = root / "Library" / "Application Support"
     return [
         BrowserCookieSource("Chrome", app_support / "Google" / "Chrome", "Chrome Safe Storage"),
@@ -72,27 +66,24 @@ def load_yuque_cookie_from_browsers(
 ) -> BrowserCookieResult:
     """从浏览器中读取语雀 Cookie。
 
-    会优先读取明文 value；如果只有 encrypted_value，则尝试用 macOS 钥匙串中的
+    先读取明文 value；如果只有 encrypted_value，则尝试用 macOS 钥匙串中的
     Chromium Safe Storage 口令解密。
     """
     checked = 0
     encrypted_hits = 0
     for source in sources or default_chromium_sources():
         safe_storage_password: bytes | None = None
-        windows_key: bytes | None = None
+        safe_storage_loaded = False
         for cookie_db in _iter_cookie_databases(source.profile_root):
             checked += 1
             # 同一个浏览器 profile 只取一次解密材料，避免重复访问钥匙串或 Local State。
-            if platform.system() == "Windows":
-                if windows_key is None:
-                    windows_key = _get_windows_chromium_key(source.profile_root)
-            elif safe_storage_password is None:
+            if not safe_storage_loaded:
                 safe_storage_password = _get_safe_storage_password(source.safe_storage_service)
+                safe_storage_loaded = True
             cookies, encrypted_count = _read_cookies(
                 cookie_db,
                 domain=domain,
                 safe_storage_password=safe_storage_password,
-                windows_key=windows_key,
             )
             encrypted_hits += encrypted_count
             if cookies:
@@ -107,7 +98,7 @@ def load_yuque_cookie_from_browsers(
         return BrowserCookieResult(
             cookie="",
             source="",
-            message=f"找到 {encrypted_hits} 个语雀 Cookie，但无法解密。请确认允许访问浏览器钥匙串项，或先解锁钥匙串后重试",
+            message=_encrypted_cookie_failure_message(encrypted_hits),
         )
     if checked:
         return BrowserCookieResult(cookie="", source="", message="已检查浏览器 Cookie 数据库，但没有找到语雀 Cookie")
@@ -129,34 +120,61 @@ def _iter_cookie_databases(profile_root: Path) -> list[Path]:
     return candidates
 
 
+def _encrypted_cookie_failure_message(encrypted_hits: int) -> str:
+    """生成浏览器 Cookie 解密失败提示。"""
+    return f"找到 {encrypted_hits} 个语雀 Cookie，但无法解密。请确认允许访问浏览器钥匙串项，或先解锁钥匙串后重试"
+
+
+def _copy_sqlite_database(source_db: Path, copied_db: Path) -> bool:
+    """复制 SQLite 数据库及 WAL/SHM 辅助文件，降低浏览器占用导致的读取失败。"""
+    copied_db.parent.mkdir(parents=True, exist_ok=True)
+    for attempt in range(3):
+        try:
+            shutil.copy2(source_db, copied_db)
+            for suffix in ("-wal", "-shm"):
+                sidecar = Path(f"{source_db}{suffix}")
+                if sidecar.exists():
+                    shutil.copy2(sidecar, Path(f"{copied_db}{suffix}"))
+            return True
+        except OSError:
+            if attempt == 2:
+                return False
+            time.sleep(0.08)
+    return False
+
+
 def _read_cookies(
     cookie_db: Path,
     *,
     domain: str,
     safe_storage_password: bytes | None,
-    windows_key: bytes | None,
 ) -> tuple[list[tuple[str, str]], int]:
     """从单个 Cookie 数据库中提取语雀相关 Cookie。"""
-    with tempfile.TemporaryDirectory() as tmp:
+    with tempfile.TemporaryDirectory(prefix="yuque2markdown-cookies-", ignore_cleanup_errors=True) as tmp:
         copied_db = Path(tmp) / "Cookies"
-        try:
-            # 先复制到临时目录再读取，避免浏览器占用锁导致 sqlite 打不开。
-            shutil.copy2(cookie_db, copied_db)
-        except OSError:
+        # 复制到临时目录后读取，避免浏览器占用锁导致 sqlite 打不开。
+        # Chromium 使用 WAL 时，最新 Cookie 可能还在 -wal 文件里，因此辅助文件也要一起复制。
+        if not _copy_sqlite_database(cookie_db, copied_db):
             return [], 0
+        conn: sqlite3.Connection | None = None
         try:
-            with sqlite3.connect(copied_db) as conn:
-                rows = conn.execute(
-                    """
-                    SELECT host_key, name, value, encrypted_value, expires_utc
-                    FROM cookies
-                    WHERE host_key LIKE ?
-                    ORDER BY host_key, path, name
-                    """,
-                    (f"%{domain}",),
-                ).fetchall()
+            conn = sqlite3.connect(copied_db)
+            conn.execute("PRAGMA query_only = ON")
+            normalized_domain = domain.lstrip(".")
+            rows = conn.execute(
+                """
+                SELECT host_key, name, value, encrypted_value, expires_utc
+                FROM cookies
+                WHERE host_key = ? OR host_key LIKE ?
+                ORDER BY host_key, path, name
+                """,
+                (normalized_domain, f"%.{normalized_domain}"),
+            ).fetchall()
         except sqlite3.Error:
             return [], 0
+        finally:
+            if conn is not None:
+                conn.close()
 
     now_chrome = int((time.time() + CHROME_EPOCH_OFFSET_SECONDS) * 1_000_000)
     cookies: list[tuple[str, str]] = []
@@ -177,15 +195,12 @@ def _read_cookies(
             continue
         if encrypted_value:
             encrypted_bytes = bytes(encrypted_value)
-            # 明文 value 为空时再尝试解密，尽量复用浏览器原始存储逻辑。
-            if platform.system() == "Windows":
-                decrypted = _decrypt_windows_chromium_cookie(encrypted_bytes, windows_key=windows_key)
-            else:
-                decrypted = _decrypt_macos_chromium_cookie(
-                    encrypted_bytes,
-                    host_key=str(host or ""),
-                    password=safe_storage_password,
-                )
+            # 明文 value 为空时再尝试解密，贴近浏览器原始存储逻辑。
+            decrypted = _decrypt_macos_chromium_cookie(
+                encrypted_bytes,
+                host_key=str(host or ""),
+                password=safe_storage_password,
+            )
             if decrypted:
                 pair = (str(host or ""), name)
                 if pair not in seen_pairs:
@@ -239,147 +254,15 @@ def _decrypt_macos_chromium_cookie(encrypted_value: bytes, *, host_key: str, pas
         return ""
     if proc.returncode != 0:
         return ""
-    raw = proc.stdout
-    host_hash = hashlib.sha256(host_key.encode("utf-8")).digest()
-    if raw.startswith(host_hash):
-        raw = raw[len(host_hash):]
-    return raw.decode("utf-8", errors="ignore")
+    return _decode_decrypted_cookie(proc.stdout, host_key=host_key)
 
 
-def _get_windows_chromium_key(profile_root: Path) -> bytes | None:
-    local_state = profile_root / "Local State"
-    if not local_state.exists():
-        return None
-    try:
-        data = json.loads(local_state.read_text(encoding="utf-8"))
-        encrypted_key = data.get("os_crypt", {}).get("encrypted_key")
-        if not encrypted_key:
-            return None
-        raw_key = base64.b64decode(encrypted_key)
-    except (OSError, ValueError, TypeError):
-        return None
-    if raw_key.startswith(b"DPAPI"):
-        raw_key = raw_key[5:]
-    return _windows_crypt_unprotect_data(raw_key)
-
-
-def _decrypt_windows_chromium_cookie(encrypted_value: bytes, *, windows_key: bytes | None) -> str:
-    if encrypted_value.startswith((b"v10", b"v11")):
-        if not windows_key or len(encrypted_value) < 3 + 12 + 16:
-            return ""
-        nonce = encrypted_value[3:15]
-        ciphertext = encrypted_value[15:-16]
-        tag = encrypted_value[-16:]
-        raw = _windows_aes_gcm_decrypt(windows_key, nonce, ciphertext, tag)
-        return raw.decode("utf-8", errors="ignore") if raw else ""
-    raw = _windows_crypt_unprotect_data(encrypted_value)
-    return raw.decode("utf-8", errors="ignore") if raw else ""
-
-
-def _windows_crypt_unprotect_data(data: bytes) -> bytes | None:
-    if platform.system() != "Windows":
-        return None
-
-    class DATA_BLOB(ctypes.Structure):
-        _fields_ = [("cbData", ctypes.wintypes.DWORD), ("pbData", ctypes.POINTER(ctypes.c_char))]
-
-    in_buffer = ctypes.create_string_buffer(data)
-    in_blob = DATA_BLOB(len(data), ctypes.cast(in_buffer, ctypes.POINTER(ctypes.c_char)))
-    out_blob = DATA_BLOB()
-    crypt32 = ctypes.windll.crypt32
-    kernel32 = ctypes.windll.kernel32
-    if not crypt32.CryptUnprotectData(ctypes.byref(in_blob), None, None, None, None, 0, ctypes.byref(out_blob)):
-        return None
-    try:
-        return ctypes.string_at(out_blob.pbData, out_blob.cbData)
-    finally:
-        kernel32.LocalFree(out_blob.pbData)
-
-
-def _windows_aes_gcm_decrypt(key: bytes, nonce: bytes, ciphertext: bytes, tag: bytes) -> bytes | None:
-    if platform.system() != "Windows":
-        return None
-    bcrypt = ctypes.windll.bcrypt
-    BCRYPT_AES_ALGORITHM = "AES"
-    BCRYPT_CHAIN_MODE_GCM = "ChainingModeGCM"
-    BCRYPT_CHAINING_MODE = "ChainingMode"
-    STATUS_SUCCESS = 0
-
-    alg = ctypes.c_void_p()
-    key_handle = ctypes.c_void_p()
-    result = bcrypt.BCryptOpenAlgorithmProvider(ctypes.byref(alg), BCRYPT_AES_ALGORITHM, None, 0)
-    if result != STATUS_SUCCESS:
-        return None
-    try:
-        mode = ctypes.create_unicode_buffer(BCRYPT_CHAIN_MODE_GCM)
-        result = bcrypt.BCryptSetProperty(
-            alg,
-            BCRYPT_CHAINING_MODE,
-            ctypes.cast(mode, ctypes.POINTER(ctypes.c_ubyte)),
-            ctypes.sizeof(mode),
-            0,
-        )
-        if result != STATUS_SUCCESS:
-            return None
-        key_buffer = ctypes.create_string_buffer(key)
-        result = bcrypt.BCryptGenerateSymmetricKey(
-            alg,
-            ctypes.byref(key_handle),
-            None,
-            0,
-            ctypes.cast(key_buffer, ctypes.POINTER(ctypes.c_ubyte)),
-            len(key),
-            0,
-        )
-        if result != STATUS_SUCCESS:
-            return None
-
-        class BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO(ctypes.Structure):
-            _fields_ = [
-                ("cbSize", ctypes.wintypes.ULONG),
-                ("dwInfoVersion", ctypes.wintypes.ULONG),
-                ("pbNonce", ctypes.POINTER(ctypes.c_ubyte)),
-                ("cbNonce", ctypes.wintypes.ULONG),
-                ("pbAuthData", ctypes.POINTER(ctypes.c_ubyte)),
-                ("cbAuthData", ctypes.wintypes.ULONG),
-                ("pbTag", ctypes.POINTER(ctypes.c_ubyte)),
-                ("cbTag", ctypes.wintypes.ULONG),
-                ("pbMacContext", ctypes.POINTER(ctypes.c_ubyte)),
-                ("cbMacContext", ctypes.wintypes.ULONG),
-                ("cbAAD", ctypes.wintypes.ULONG),
-                ("cbData", ctypes.wintypes.ULONGLONG),
-                ("dwFlags", ctypes.wintypes.ULONG),
-            ]
-
-        nonce_buffer = ctypes.create_string_buffer(nonce)
-        tag_buffer = ctypes.create_string_buffer(tag)
-        ciphertext_buffer = ctypes.create_string_buffer(ciphertext, len(ciphertext))
-        output_buffer = ctypes.create_string_buffer(len(ciphertext))
-        auth_info = BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO()
-        auth_info.cbSize = ctypes.sizeof(BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO)
-        auth_info.dwInfoVersion = 1
-        auth_info.pbNonce = ctypes.cast(nonce_buffer, ctypes.POINTER(ctypes.c_ubyte))
-        auth_info.cbNonce = len(nonce)
-        auth_info.pbTag = ctypes.cast(tag_buffer, ctypes.POINTER(ctypes.c_ubyte))
-        auth_info.cbTag = len(tag)
-        result_len = ctypes.wintypes.ULONG()
-        result = bcrypt.BCryptDecrypt(
-            key_handle,
-            ctypes.cast(ciphertext_buffer, ctypes.POINTER(ctypes.c_ubyte)),
-            len(ciphertext),
-            ctypes.byref(auth_info),
-            None,
-            0,
-            ctypes.cast(output_buffer, ctypes.POINTER(ctypes.c_ubyte)),
-            len(ciphertext),
-            ctypes.byref(result_len),
-            0,
-        )
-        if result != STATUS_SUCCESS:
-            return None
-        return output_buffer.raw[: result_len.value]
-    finally:
-        if key_handle:
-            bcrypt.BCryptDestroyKey(key_handle)
-        if alg:
-            bcrypt.BCryptCloseAlgorithmProvider(alg, 0)
+def _decode_decrypted_cookie(raw: bytes, *, host_key: str = "") -> str:
+    """解码 Chromium 解密后的 Cookie 明文。"""
+    if not raw:
+        return ""
+    if host_key:
+        host_hash = hashlib.sha256(host_key.encode("utf-8")).digest()
+        if raw.startswith(host_hash):
+            raw = raw[len(host_hash):]
+    return raw.rstrip(b"\x00").decode("utf-8", errors="ignore")

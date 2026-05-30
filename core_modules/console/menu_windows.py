@@ -1,11 +1,19 @@
+"""Windows 终端菜单渲染与输入处理。
+
+本模块基于 windows-curses 提供的 curses API 实现主菜单、输入框、选择列表和消息
+弹窗，是 console 交互的 Windows 后端实现。
+"""
+
 from __future__ import annotations
 
+import curses
 import unicodedata
 from dataclasses import dataclass, field
 
 
 @dataclass(slots=True)
 class InlineChoice:
+    """单个菜单行内的可切换选项。"""
     key: str
     label: str
     checked: bool = False
@@ -13,30 +21,79 @@ class InlineChoice:
 
 @dataclass(slots=True)
 class MenuItem:
+    """定义控制台菜单项的显示与交互属性。"""
     key: str
     title: str
     value: str = ""
     item_type: str = "action"
     focusable: bool = True
     input_style: bool = False
-    edit_value: str | None = None
-    indent: int = 0
+    edit_value: str | None = None  # 编辑时的初始值，None 时使用 value
+    indent: int = 0  # 缩进级别，每个级别 4 个空格
     inline_choices: list[InlineChoice] = field(default_factory=list)
     inline_selected_index: int = 0
 
 
-DEFAULT_HELP_LINES = ["TODO: Windows 菜单渲染待实现"]
-EDIT_HELP_LINES = ["TODO: Windows 菜单渲染待实现"]
-TEXT_HELP_LINES = ["TODO: Windows 菜单渲染待实现"]
-CONFIRM_HELP_LINES = ["TODO: Windows 菜单渲染待实现"]
-SELECT_HELP_LINES = ["TODO: Windows 菜单渲染待实现"]
-MESSAGE_HELP_LINES = ["TODO: Windows 菜单渲染待实现"]
-MIN_SCREEN_WIDTH = 0
-MIN_SCREEN_HEIGHT = 0
+DEFAULT_HELP_LINES = ["Up/Down 移动 | Left/Right 选择行内项 | Enter 确认/编辑 | Space 切换 | s 手动保存配置 | Esc 返回"]
+EDIT_HELP_LINES = ["Enter 确认 | Esc 取消 | Up/Down 放弃编辑 | Left/Right 移动 | Backspace/Delete 删除"]
+CONFIRM_HELP_LINES = ["Up/Down 移动 | Enter 确认 | Esc 取消"]
+SELECT_HELP_LINES = ["Up/Down 移动 | Enter 选择 | Esc 返回 | 输入开始过滤 | / 过滤模式 | Backspace 清空"]
+MESSAGE_HELP_LINES = ["Esc 返回"]
+MIN_SCREEN_WIDTH = 160
+MIN_SCREEN_HEIGHT = 50
+DIVIDER_CHAR = "-"
+DOT_CHAR = "."
+SUBMENU_SUFFIX = ">"
+UNSTABLE_GLYPH_SEQUENCE_REPLACEMENTS = (
+    ("↑↓", "Up/Down"),
+    ("↓↑", "Down/Up"),
+    ("←→", "Left/Right"),
+    ("→←", "Right/Left"),
+)
+UNSTABLE_GLYPH_REPLACEMENTS = str.maketrans(
+    {
+        "─": "-",
+        "━": "-",
+        "═": "=",
+        "│": "|",
+        "┃": "|",
+        "┌": "+",
+        "┐": "+",
+        "└": "+",
+        "┘": "+",
+        "├": "+",
+        "┤": "+",
+        "┬": "+",
+        "┴": "+",
+        "┼": "+",
+        "·": ".",
+        "•": "*",
+        "›": ">",
+        "‹": "<",
+        "→": "->",
+        "←": "<-",
+        "↑": "Up",
+        "↓": "Down",
+        "…": "...",
+        "—": "-",
+        "–": "-",
+    }
+)
+
+# windows-curses/PDCurses 在不同终端里可能返回标准 curses key，也可能返回
+# 控制字符或常见整数码。集中归一化，避免菜单逻辑里到处散落平台判断。
+BACKSPACE_KEYS = {getattr(curses, "KEY_BACKSPACE", 263), 8, 127, "\b", "\x7f"}
+DELETE_KEYS = {getattr(curses, "KEY_DC", 330), 330}
+LEFT_KEYS = {getattr(curses, "KEY_LEFT", 260), 260}
+RIGHT_KEYS = {getattr(curses, "KEY_RIGHT", 261), 261}
+UP_KEYS = {getattr(curses, "KEY_UP", 259), 259}
+DOWN_KEYS = {getattr(curses, "KEY_DOWN", 258), 258}
+INTERRUPT_KEYS = {3, "\x03"}
 
 
 @dataclass(slots=True)
 class MenuRefreshState:
+    """保存菜单异步刷新时的临时状态。"""
     lines: list[str]
     done: bool = False
     refresh_interval: float = 0.18
@@ -44,58 +101,1165 @@ class MenuRefreshState:
     error: Exception | None = None
 
 
-def _char_display_width(char: str) -> int:
-    return 2 if unicodedata.east_asian_width(char) in {"W", "F"} else 1
-
-
-def _display_width(text: str) -> int:
-    return sum(_char_display_width(char) for char in text)
-
-
-def _truncate(text: str, width: int) -> str:
-    if width <= 0 or _display_width(text) <= width:
-        return text
-    if width == 1:
-        return "…"
-    result: list[str] = []
-    current = 0
-    for char in text:
-        char_width = _char_display_width(char)
-        if current + char_width > width - 1:
-            break
-        result.append(char)
-        current += char_width
-    return "".join(result) + "…"
+def _layout_frame(height: int, width: int, help_text: list[str], item_count: int, transient_lines: list[str] | None, status_lines: list[str]) -> tuple[int, int, int, int]:
+    """计算当前菜单框架布局。"""
+    content_width = min(width - 1, max(60, min(128, width - 4)))
+    left = max(0, (width - content_width) // 2)
+    transient_height = len(transient_lines) + 1 if transient_lines else 0
+    header_height = 1 + len(help_text) + 1
+    body_height = item_count
+    top_margin = max(1, height // 8)
+    top = min(max(0, top_margin), max(0, height - (header_height + transient_height + body_height + 2)))
+    divider_row = top + len(help_text) + 1
+    return content_width, left, top, divider_row
 
 
 def _screen_too_small_message(height: int, width: int) -> list[str]:
-    return [f"当前窗口过小：{width}x{height}"]
+    """生成窗口过小时的提示文案。"""
+    missing_width = max(0, MIN_SCREEN_WIDTH - width)
+    missing_height = max(0, MIN_SCREEN_HEIGHT - height)
+    if missing_width > 0 and missing_height > 0:
+        hint = f"宽度还差 {missing_width} 列，高度还差 {missing_height} 行。"
+    elif missing_width > 0:
+        hint = f"宽度还差 {missing_width} 列。"
+    elif missing_height > 0:
+        hint = f"高度还差 {missing_height} 行。"
+    else:
+        hint = "请放大终端窗口后继续。"
+    return [
+        f"当前窗口大小：{width}x{height}",
+        f"最低要求：{MIN_SCREEN_WIDTH}x{MIN_SCREEN_HEIGHT}",
+        hint,
+    ]
 
 
-def _render_screen_too_small(_stdscr, *, title: str, height: int, width: int) -> None:
-    raise NotImplementedError(f"TODO: Windows 菜单渲染待实现（{title} / {width}x{height}）")
+def _render_screen_too_small(stdscr, *, title: str, height: int, width: int) -> None:
+    """渲染窗口尺寸不足提示页。"""
+    stdscr.clear()
+    help_text = ["窗口大小不足，调整后会自动刷新"]
+    content_width = max(20, min(width - 2, 60))
+    left = max(0, (width - content_width) // 2)
+    top = max(0, min(max(1, height // 5), max(0, height - 6)))
+    _render_menu_header(stdscr, title=title, help_text=help_text, top=top, width=width, content_width=content_width)
+    row = top + len(help_text) + 2
+    for line in _screen_too_small_message(height, width):
+        if row >= height:
+            break
+        _draw_text(stdscr, row, left, line, width=content_width, attrs=curses.A_DIM)
+        row += 1
 
 
-def _is_screen_too_small(_height: int, _width: int) -> bool:
-    return False
+def _is_screen_too_small(height: int, width: int) -> bool:
+    """判断窗口是否小于菜单最低要求。"""
+    return width < MIN_SCREEN_WIDTH or height < MIN_SCREEN_HEIGHT
 
 
-def _layout_frame(height: int, width: int, help_text: list[str], item_count: int, transient_lines: list[str] | None, status_lines: list[str]) -> tuple[int, int, int, int]:
-    _ = (height, help_text, item_count, transient_lines, status_lines)
-    return max(60, width - 2), 0, 0, 0
+def _draw_text(stdscr, row: int, col: int, text: str, *, width: int | None = None, attrs: int = 0) -> None:
+    """安全地向指定位置输出文本。"""
+    if row < 0 or col < 0:
+        return
+    try:
+        height, screen_width = stdscr.getmaxyx()
+    except curses.error:
+        return
+    if row >= height or col >= screen_width:
+        return
+    available = screen_width - col
+    if width is not None:
+        available = min(available, width)
+    if available <= 0:
+        return
+    clipped = _truncate(text, available)
+    padded = _pad_to_width(clipped, available)
+    try:
+        stdscr.addstr(row, col, padded, attrs)
+    except curses.error:
+        return
 
 
-def _render_framed_header(_stdscr, *, title: str, help_text: list[str], width: int, content_width: int, top: int, left: int, height: int) -> int:
-    _ = (_stdscr, title, help_text, width, content_width, top, left, height)
-    raise NotImplementedError("TODO: Windows 菜单渲染待实现")
+def _set_cursor(visibility: int) -> None:
+    """安全设置光标可见性。
+
+    Windows 终端对 ``curs_set`` 的支持不完全一致，失败时不应中断菜单。
+    """
+    try:
+        curses.curs_set(visibility)
+    except (AttributeError, curses.error):
+        return
 
 
-def _draw_text(_stdscr, _row: int, _col: int, _text: str, *, width: int | None = None, attrs: int = 0) -> None:
-    _ = (_stdscr, _row, _col, _text, width, attrs)
-    raise NotImplementedError("TODO: Windows 菜单渲染待实现")
+def _move_cursor(stdscr, row: int, col: int) -> None:
+    """安全移动光标，避免窗口过小时 PDCurses 抛错。"""
+    try:
+        stdscr.move(row, max(0, col))
+    except curses.error:
+        return
+
+
+def _read_key(stdscr, *, wide: bool = False):
+    """读取按键；宽字符读取不可用或失败时退回 ``getch``。"""
+    if wide and hasattr(stdscr, "get_wch"):
+        try:
+            return stdscr.get_wch()
+        except curses.error:
+            return -1
+    try:
+        return stdscr.getch()
+    except curses.error:
+        return -1
+
+
+def _char_display_width(char: str) -> int:
+    """返回单个字符在终端中的显示宽度。"""
+    return 2 if unicodedata.east_asian_width(char) in {"W", "F"} else 1
+
+
+def _normalize_terminal_text(text: str) -> str:
+    """替换 Windows 终端中容易造成错位的符号。"""
+    for source, replacement in UNSTABLE_GLYPH_SEQUENCE_REPLACEMENTS:
+        text = text.replace(source, replacement)
+    return text.translate(UNSTABLE_GLYPH_REPLACEMENTS)
+
+
+def _coerce_printable_key(key) -> str | None:
+    """把 getch/get_wch 返回值统一转换为可打印字符。"""
+    if isinstance(key, str):
+        return key if key.isprintable() else None
+    if isinstance(key, int) and 0 <= key <= 0x10FFFF:
+        if key >= curses.KEY_MIN:
+            return None
+        try:
+            char = chr(key)
+        except ValueError:
+            return None
+        return char if char.isprintable() else None
+    return None
+
+
+def _start_filter_buffer(current_filter: str, seed_key=None) -> tuple[list[str], int]:
+    """初始化过滤输入缓冲区。"""
+    chars = list(current_filter)
+    char = _coerce_printable_key(seed_key)
+    if char is not None:
+        chars.append(char)
+    return chars, len(chars)
+
+
+def _cursor_display_offset(chars: list[str], cursor_pos: int) -> int:
+    """计算光标在混合宽字符文本中的显示偏移。"""
+    safe_pos = max(0, min(cursor_pos, len(chars)))
+    return _display_width("".join(chars[:safe_pos]))
+
+
+def _filter_cursor_x(left: int, content_width: int, chars: list[str], cursor_pos: int) -> int:
+    """计算过滤输入光标的屏幕横坐标。"""
+    prompt_width = _display_width("过滤: ")
+    return min(left + prompt_width + _cursor_display_offset(chars, cursor_pos), max(left, left + content_width - 1))
+
+
+def _line(width: int) -> str:
+    """返回 Windows 终端下稳定的一行分隔符。"""
+    return DIVIDER_CHAR * max(0, width)
+
+
+def _dots(width: int) -> str:
+    """返回 Windows 终端下稳定的点线填充。"""
+    return DOT_CHAR * max(0, width)
+
+
+def _apply_text_edit_key(key, chars: list[str], cursor_pos: int) -> tuple[list[str], int, bool]:
+    """处理文本编辑按键。
+
+    返回:
+        ``(字符列表, 新光标位置, 是否已处理)``。
+    """
+    if _is_backspace_key(key):
+        if cursor_pos > 0:
+            del chars[cursor_pos - 1]
+            cursor_pos -= 1
+        return chars, cursor_pos, True
+    if _is_delete_key(key):
+        if cursor_pos < len(chars):
+            del chars[cursor_pos]
+        return chars, cursor_pos, True
+    if _is_left_key(key):
+        return chars, max(0, cursor_pos - 1), True
+    if _is_right_key(key):
+        return chars, min(len(chars), cursor_pos + 1), True
+    char = _coerce_printable_key(key)
+    if char is not None:
+        chars.insert(cursor_pos, char)
+        return chars, cursor_pos + 1, True
+    return chars, cursor_pos, False
+
+
+def _is_enter_key(key) -> bool:
+    """统一判断 Enter 键。"""
+    return key in (10, 13, "\n", "\r", curses.KEY_ENTER)
+
+
+def _is_escape_key(key) -> bool:
+    """统一判断 Esc 键。"""
+    return key == 27 or key == "\x1b"
+
+
+def _is_backspace_key(key) -> bool:
+    return key in BACKSPACE_KEYS
+
+
+def _is_delete_key(key) -> bool:
+    return key in DELETE_KEYS
+
+
+def _is_left_key(key) -> bool:
+    return key in LEFT_KEYS
+
+
+def _is_right_key(key) -> bool:
+    return key in RIGHT_KEYS
+
+
+def _is_up_key(key) -> bool:
+    return key in UP_KEYS
+
+
+def _is_down_key(key) -> bool:
+    return key in DOWN_KEYS
+
+
+def _is_interrupt_key(key) -> bool:
+    """统一判断 Ctrl+C。"""
+    return key in INTERRUPT_KEYS
+
+
+_ESCDELAY_CONFIGURED = False
+
+
+def _configure_escape_delay() -> None:
+    """把 Esc 识别延迟调低，减少方向键与 Esc 的混淆等待。"""
+    global _ESCDELAY_CONFIGURED
+    if _ESCDELAY_CONFIGURED:
+        return
+    try:
+        curses.set_escdelay(25)
+    except (AttributeError, curses.error):
+        pass
+    _ESCDELAY_CONFIGURED = True
+
+
+def _enable_keypad(stdscr) -> None:
+    """为 curses 窗口启用 keypad 模式。"""
+    _configure_escape_delay()
+    try:
+        stdscr.keypad(True)
+    except (AttributeError, curses.error):
+        return
+
+
+def run_menu(
+    title: str,
+    items: list[MenuItem],
+    status: str = "",
+    *,
+    status_lines: list[str] | None = None,
+    help_lines: list[str] | None = None,
+    initial_index: int = 0,
+    transient_lines: list[str] | None = None,
+    refresh_state: MenuRefreshState | None = None,
+) -> str | None:
+    """渲染通用菜单并返回用户选择的动作。"""
+    lines = status_lines if status_lines is not None else ([status] if status else [])
+    index = _first_focusable_index(items, preferred=initial_index)
+    editing_index: int | None = None
+    edit_chars: list[str] = []
+    edit_cursor: int = 0
+
+    def _render(stdscr) -> str | None:
+        nonlocal index, transient_lines, editing_index, edit_chars, edit_cursor
+        _enable_keypad(stdscr)
+        _set_cursor(0)
+        last_signature: tuple | None = None
+        if refresh_state is not None:
+            stdscr.timeout(max(1, int(refresh_state.refresh_interval * 1000)))
+        else:
+            # Windows curses 的阻塞读取可能延迟处理 Ctrl+C，短轮询能让中断及时冒泡。
+            stdscr.timeout(100)
+        while True:
+            if refresh_state is not None:
+                transient_lines = refresh_state.lines
+            height, width = stdscr.getmaxyx()
+            if _is_screen_too_small(height, width):
+                _render_screen_too_small(stdscr, title=title, height=height, width=width)
+                stdscr.refresh()
+                key = _read_key(stdscr)
+                if key == -1:
+                    continue
+                if _is_interrupt_key(key):
+                    raise KeyboardInterrupt
+                if _is_escape_key(key):
+                    return None
+                continue
+            help_text = _menu_help_lines(help_lines, editing_index is not None)
+            signature = _menu_signature(
+                title=title,
+                items=items,
+                lines=lines,
+                help_text=help_text,
+                transient_lines=transient_lines,
+                index=index,
+                editing_index=editing_index,
+                edit_chars=edit_chars,
+                edit_cursor=edit_cursor,
+                height=height,
+                width=width,
+            )
+            if signature != last_signature:
+                stdscr.clear()
+                edit_cursor_pos = _render_menu_frame(
+                    stdscr,
+                    title=title,
+                    items=items,
+                    lines=lines,
+                    help_text=help_text,
+                    transient_lines=transient_lines,
+                    index=index,
+                    editing_index=editing_index,
+                    edit_chars=edit_chars,
+                    edit_cursor=edit_cursor,
+                    height=height,
+                    width=width,
+                )
+                last_signature = signature
+            else:
+                edit_cursor_pos = (0, 0)
+            if editing_index is not None:
+                _set_cursor(2)  # 块状光标更明显
+                _move_cursor(stdscr, edit_cursor_pos[0], edit_cursor_pos[1])
+                key = _read_key(stdscr, wide=True)
+            else:
+                _set_cursor(0)  # 非编辑时隐藏光标
+                key = _read_key(stdscr)
+            if key == -1:
+                if refresh_state is not None and refresh_state.done:
+                    transient_lines = []
+                    return "__refresh_done__"
+                continue
+            if _is_interrupt_key(key):
+                raise KeyboardInterrupt
+            if editing_index is not None:
+                action, editing_index, edit_chars, edit_cursor, index = _handle_editing_key(
+                    key=key,
+                    items=items,
+                    editing_index=editing_index,
+                    edit_chars=edit_chars,
+                    edit_cursor=edit_cursor,
+                    index=index,
+                )
+                if action is not None:
+                    _set_cursor(0)
+                    return action
+                continue
+            action, index, editing_index, edit_chars, edit_cursor = _handle_menu_key(
+                key=key,
+                items=items,
+                index=index,
+            )
+            if editing_index is not None:
+                _set_cursor(1)
+                continue
+            if action is not None:
+                if action == "__exit__":
+                    return None
+                return action
+
+    return curses.wrapper(_render)
+
+
+def _menu_signature(
+    *,
+    title: str,
+    items: list[MenuItem],
+    lines: list[str],
+    help_text: list[str],
+    transient_lines: list[str] | None,
+    index: int,
+    editing_index: int | None,
+    edit_chars: list[str],
+    edit_cursor: int,
+    height: int,
+    width: int,
+) -> tuple:
+    item_signature = tuple(
+        (
+            item.key,
+            item.title,
+            item.value,
+            item.item_type,
+            item.focusable,
+            item.input_style,
+            item.indent,
+            item.inline_selected_index,
+            tuple((choice.key, choice.label, choice.checked) for choice in item.inline_choices),
+        )
+        for item in items
+    )
+    return (
+        title,
+        tuple(lines),
+        tuple(help_text),
+        tuple(transient_lines or []),
+        index,
+        editing_index,
+        tuple(edit_chars),
+        edit_cursor,
+        height,
+        width,
+        item_signature,
+    )
+
+
+def _menu_help_lines(help_lines: list[str] | None, editing: bool) -> list[str]:
+    """根据当前状态选择帮助文案。"""
+    if help_lines is not None:
+        return help_lines
+    return EDIT_HELP_LINES if editing else DEFAULT_HELP_LINES
+
+
+def _render_menu_frame(
+    stdscr,
+    *,
+    title: str,
+    items: list[MenuItem],
+    lines: list[str],
+    help_text: list[str],
+    transient_lines: list[str] | None,
+    index: int,
+    editing_index: int | None,
+    edit_chars: list[str],
+    edit_cursor: int,
+    height: int,
+    width: int,
+) -> tuple[int, int]:
+    """渲染菜单主框架并返回编辑光标位置。"""
+    content_width, left, top, divider_row = _layout_frame(height, width, help_text, len(items), transient_lines, lines)
+    _render_menu_header(stdscr, title=title, help_text=help_text, top=top, width=width, content_width=content_width)
+    if divider_row < height:
+        _draw_text(stdscr, divider_row, left, _line(content_width), width=content_width)
+    row = divider_row + 1
+    reserved_footer = _reserved_status_rows(lines)
+    content_bottom = max(row, height - reserved_footer)
+    row = _render_transient_lines(
+        stdscr,
+        transient_lines=transient_lines,
+        row=row,
+        left=left,
+        content_width=content_width,
+        height=content_bottom,
+    )
+    edit_cursor_pos, menu_end_row = _render_menu_items(
+        stdscr,
+        items,
+        index,
+        row,
+        left,
+        content_width,
+        content_bottom,
+        editing_index,
+        edit_chars,
+        edit_cursor,
+    )
+    _render_status_lines(stdscr, lines, menu_end_row, left, content_width, height)
+    return edit_cursor_pos
+
+
+def _render_menu_header(stdscr, *, title: str, help_text: list[str], top: int, width: int, content_width: int) -> None:
+    """渲染菜单标题与帮助行。"""
+    _draw_text(
+        stdscr,
+        top,
+        max(0, (width - min(_display_width(title), content_width)) // 2),
+        title,
+        width=min(content_width, width),
+        attrs=curses.A_BOLD,
+    )
+    for offset, line in enumerate(help_text, start=1):
+        row = top + offset
+        centered_line = _truncate(line, content_width)
+        line_x = max(0, (width - _display_width(centered_line)) // 2)
+        _draw_text(stdscr, row, line_x, centered_line, width=min(content_width, width - line_x), attrs=curses.A_BOLD)
+
+
+def _render_framed_header(stdscr, *, title: str, help_text: list[str], width: int, content_width: int, top: int, left: int, height: int) -> int:
+    """渲染带分隔线的标题区域，并返回分隔线所在行。"""
+    _render_menu_header(stdscr, title=title, help_text=help_text, top=top, width=width, content_width=content_width)
+    divider_row = top + len(help_text) + 1
+    if divider_row < height:
+        _draw_text(stdscr, divider_row, left, _line(content_width), width=content_width)
+    return divider_row
+
+
+def _render_transient_lines(stdscr, *, transient_lines: list[str] | None, row: int, left: int, content_width: int, height: int) -> int:
+    """渲染瞬时提示行，并返回下一可用行号。"""
+    if not transient_lines:
+        return row
+    for line in transient_lines:
+        if row >= height:
+            break
+        _draw_text(stdscr, row, left + 2, line, width=max(0, content_width - 2), attrs=curses.A_DIM)
+        row += 1
+    if row < height:
+        row += 1
+    return row
+
+
+def _handle_editing_key(*, key, items: list[MenuItem], editing_index: int, edit_chars: list[str], edit_cursor: int, index: int) -> tuple[str | None, int | None, list[str], int, int]:
+    """处理输入框编辑状态下的按键。"""
+    if key in ("\n", "\r"):
+        result = "".join(edit_chars).strip()
+        item_key = items[editing_index].key
+        return f"{item_key}:{result}", None, [], 0, index
+    if key == "\x1b":
+        return None, None, [], 0, index
+    if _is_backspace_key(key):
+        if edit_cursor > 0:
+            del edit_chars[edit_cursor - 1]
+            edit_cursor -= 1
+        return None, editing_index, edit_chars, edit_cursor, index
+    if _is_delete_key(key):
+        if edit_cursor < len(edit_chars):
+            del edit_chars[edit_cursor]
+        return None, editing_index, edit_chars, edit_cursor, index
+    if _is_left_key(key):
+        return None, editing_index, edit_chars, max(0, edit_cursor - 1), index
+    if _is_right_key(key):
+        return None, editing_index, edit_chars, min(len(edit_chars), edit_cursor + 1), index
+    if _is_up_key(key):
+        return None, None, [], 0, _move_focus(items, index, -1)
+    if _is_down_key(key):
+        return None, None, [], 0, _move_focus(items, index, 1)
+    if isinstance(key, str) and key.isprintable():
+        edit_chars.insert(edit_cursor, key)
+        edit_cursor += 1
+    return None, editing_index, edit_chars, edit_cursor, index
+
+
+def _handle_menu_key(*, key, items: list[MenuItem], index: int) -> tuple[str | None, int, int | None, list[str], int]:
+    """处理普通菜单状态下的按键。"""
+    if _is_up_key(key):
+        return None, _move_focus(items, index, -1), None, [], 0
+    if _is_down_key(key):
+        return None, _move_focus(items, index, 1), None, [], 0
+    if _is_left_key(key) and 0 <= index < len(items) and items[index].inline_choices:
+        items[index].inline_selected_index = max(0, items[index].inline_selected_index - 1)
+        return None, index, None, [], 0
+    if _is_right_key(key) and 0 <= index < len(items) and items[index].inline_choices:
+        items[index].inline_selected_index = min(
+            len(items[index].inline_choices) - 1,
+            items[index].inline_selected_index + 1,
+        )
+        return None, index, None, [], 0
+    if _is_enter_key(key):
+        if 0 <= index < len(items) and items[index].focusable:
+            item = items[index]
+            if item.inline_choices:
+                selected_index = max(0, min(item.inline_selected_index, len(item.inline_choices) - 1))
+                return item.inline_choices[selected_index].key, index, None, [], 0
+            if item.input_style:
+                initial = item.edit_value if item.edit_value is not None else item.value
+                return None, index, index, list(initial), len(initial)
+            return item.key, index, None, [], 0
+        return None, index, None, [], 0
+    if _is_escape_key(key):
+        return "__exit__", index, None, [], 0
+    if key == ord("s"):
+        return "save", index, None, [], 0
+    if key == ord(" ") and 0 <= index < len(items):
+        item = items[index]
+        if item.inline_choices:
+            selected_index = max(0, min(item.inline_selected_index, len(item.inline_choices) - 1))
+            return item.inline_choices[selected_index].key, index, None, [], 0
+        if item.item_type in {"bool", "check"}:
+            return item.key, index, None, [], 0
+    return None, index, None, [], 0
+
+
+def run_confirmation(
+    title: str,
+    lines: list[str],
+    help_lines: list[str] | None = None,
+    confirm_label: str = "确认导出",
+    cancel_label: str = "取消",
+) -> bool:
+    """显示确认对话框并返回是否确认。可自定义按钮文案。"""
+    items = [
+        MenuItem("__confirm__", confirm_label),
+        MenuItem("__cancel__", cancel_label),
+    ]
+    index = 0
+
+    def _run(stdscr) -> bool:
+        nonlocal index
+        _enable_keypad(stdscr)
+        _set_cursor(0)
+        stdscr.timeout(100)
+        while True:
+            stdscr.clear()
+            height, width = stdscr.getmaxyx()
+            if _is_screen_too_small(height, width):
+                _render_screen_too_small(stdscr, title=title, height=height, width=width)
+                stdscr.refresh()
+                key = _read_key(stdscr)
+                if key == -1:
+                    continue
+                if _is_interrupt_key(key):
+                    raise KeyboardInterrupt
+                if _is_escape_key(key):
+                    return False
+                continue
+            help_text = help_lines or CONFIRM_HELP_LINES
+            content_width, left, top, _ = _layout_frame(height, width, help_text, len(items) + len(lines) + 1, None, [])
+            divider_row = _render_framed_header(
+                stdscr,
+                title=title,
+                help_text=help_text,
+                width=width,
+                content_width=content_width,
+                top=top,
+                left=left,
+                height=height,
+            )
+            row = divider_row + 1
+            for line in lines:
+                if row >= height - 4:
+                    break
+                _draw_text(stdscr, row, left, line, width=content_width)
+                row += 1
+            row += 2
+            for offset, item in enumerate(items):
+                current_row = row + offset
+                if current_row >= height:
+                    break
+                prefix = ">" if offset == index else " "
+                attrs = curses.A_REVERSE if offset == index else 0
+                button_text = _truncate(f"{prefix} {item.title}", content_width)
+                button_x = max(left, left + (content_width - _display_width(button_text)) // 2)
+                _draw_text(stdscr, current_row, button_x, button_text, width=min(content_width, width - button_x), attrs=attrs)
+            key = _read_key(stdscr)
+            if key == -1:
+                continue
+            if _is_interrupt_key(key):
+                raise KeyboardInterrupt
+            if _is_up_key(key):
+                index = max(0, index - 1)
+            elif _is_down_key(key):
+                index = min(len(items) - 1, index + 1)
+            elif _is_enter_key(key):
+                return items[index].key == "__confirm__"
+            elif _is_escape_key(key):
+                return False
+
+    return curses.wrapper(_run)
+
+
+def run_select_list(
+    title: str,
+    lines: list[str],
+    *,
+    initial_index: int = 0,
+    help_lines: list[str] | None = None,
+    filter_text: str = "",
+    empty_message: str = "暂无可选项",
+    disabled_indexes: set[int] | None = None,
+) -> tuple[int | None, str]:
+    """显示可过滤列表，并返回选中项索引与当前过滤词。"""
+    index = max(0, min(initial_index, len(lines) - 1)) if lines else 0
+    filter_buf, cursor_pos = _start_filter_buffer(filter_text)
+    in_filter_mode = False
+    disabled_indexes = set(disabled_indexes or set())
+
+    def _apply_filter(src_lines: list[str], ft: str) -> list[tuple[int, str]]:
+        if not ft:
+            return list(enumerate(src_lines))
+        ft_lower = ft.lower()
+        return [(idx, line) for idx, line in enumerate(src_lines) if ft_lower in line.lower()]
+
+    def _first_enabled_index(filtered_items: list[tuple[int, str]]) -> int | None:
+        for filtered_index, (source_index, _line) in enumerate(filtered_items):
+            if source_index not in disabled_indexes:
+                return filtered_index
+        return None
+
+    def _move_enabled_index(filtered_items: list[tuple[int, str]], current: int, step: int) -> int:
+        if not filtered_items:
+            return 0
+        next_index = current
+        while True:
+            candidate = next_index + step
+            if candidate < 0 or candidate >= len(filtered_items):
+                return current
+            next_index = candidate
+            if filtered_items[next_index][0] not in disabled_indexes:
+                return next_index
+
+    def _run(stdscr) -> tuple[int | None, str]:
+        nonlocal index, filter_buf, cursor_pos, in_filter_mode
+        _enable_keypad(stdscr)
+        _set_cursor(0)
+        stdscr.timeout(100)
+        while True:
+            stdscr.clear()
+            height, width = stdscr.getmaxyx()
+            if _is_screen_too_small(height, width):
+                _render_screen_too_small(stdscr, title=title, height=height, width=width)
+                stdscr.refresh()
+                key = _read_key(stdscr, wide=True)
+                if _is_interrupt_key(key):
+                    raise KeyboardInterrupt
+                if _is_escape_key(key):
+                    return None, "".join(filter_buf)
+                continue
+            current_filter = "".join(filter_buf)
+            filtered = _apply_filter(lines, current_filter)
+            help_text = help_lines or SELECT_HELP_LINES
+            content_width, left, top, divider_row = _layout_frame(height, width, help_text, len(filtered) + 2, None, [])
+            divider_row = _render_framed_header(
+                stdscr,
+                title=title,
+                help_text=help_text,
+                width=width,
+                content_width=content_width,
+                top=top,
+                left=left,
+                height=height,
+            )
+            row = divider_row + 1
+            if in_filter_mode:
+                _set_cursor(1)
+                prompt = f"过滤: {''.join(filter_buf)}"
+                _draw_text(stdscr, height - 1, left, prompt, width=content_width, attrs=curses.A_DIM)
+                _move_cursor(stdscr, height - 1, _filter_cursor_x(left, content_width, filter_buf, cursor_pos))
+            elif current_filter:
+                _set_cursor(0)
+                _draw_text(stdscr, row, left, f"过滤: {current_filter} ({len(filtered)}/{len(lines)})", width=content_width, attrs=curses.A_DIM)
+                row += 1
+            else:
+                _set_cursor(0)
+            if not filtered:
+                _draw_text(stdscr, row, left, empty_message, width=content_width, attrs=curses.A_DIM)
+                row += 1
+                if in_filter_mode:
+                    _move_cursor(stdscr, height - 1, _filter_cursor_x(left, content_width, filter_buf, cursor_pos))
+                key = _read_key(stdscr, wide=True)
+                if _is_interrupt_key(key):
+                    raise KeyboardInterrupt
+                if _is_escape_key(key):
+                    filter_buf = []
+                    cursor_pos = 0
+                    in_filter_mode = False
+                    index = 0
+                    continue
+                if _is_backspace_key(key):
+                    filter_buf, cursor_pos, handled = _apply_text_edit_key(key, filter_buf, cursor_pos)
+                    if not handled and not filter_buf:
+                        in_filter_mode = False
+                elif _is_enter_key(key):
+                    return None, current_filter
+                else:
+                    filter_buf, cursor_pos, _handled = _apply_text_edit_key(key, filter_buf, cursor_pos)
+                index = 0
+                continue
+            safe_index = max(0, min(index, len(filtered) - 1))
+            first_enabled_index = _first_enabled_index(filtered)
+            if first_enabled_index is not None and filtered[safe_index][0] in disabled_indexes:
+                safe_index = first_enabled_index
+                index = safe_index
+            for current_row, (source_index, line) in enumerate(filtered, start=row):
+                if current_row >= height:
+                    break
+                prefix = ">" if current_row - row == safe_index else " "
+                attrs = curses.A_REVERSE if current_row - row == safe_index else 0
+                if source_index in disabled_indexes:
+                    attrs |= curses.A_DIM
+                _draw_text(stdscr, current_row, left, f"{prefix} {line}", width=content_width, attrs=attrs)
+            if in_filter_mode:
+                prompt = f"过滤: {''.join(filter_buf)}"
+                _draw_text(stdscr, height - 1, left, prompt, width=content_width, attrs=curses.A_DIM)
+                _move_cursor(stdscr, height - 1, _filter_cursor_x(left, content_width, filter_buf, cursor_pos))
+            key = _read_key(stdscr, wide=True)
+            if _is_interrupt_key(key):
+                raise KeyboardInterrupt
+            if in_filter_mode:
+                if _is_enter_key(key):
+                    return None, current_filter
+                if _is_escape_key(key):
+                    filter_buf = []
+                    cursor_pos = 0
+                    in_filter_mode = False
+                    _set_cursor(0)
+                    continue
+                filter_buf, cursor_pos, handled = _apply_text_edit_key(key, filter_buf, cursor_pos)
+                if handled:
+                    continue
+                if _is_up_key(key):
+                    _set_cursor(0)
+                    in_filter_mode = False
+                    index = _move_enabled_index(filtered, safe_index, -1)
+                    continue
+                if _is_down_key(key):
+                    _set_cursor(0)
+                    in_filter_mode = False
+                    index = _move_enabled_index(filtered, safe_index, 1)
+                    continue
+                continue
+            if _is_up_key(key):
+                index = _move_enabled_index(filtered, safe_index, -1)
+            elif _is_down_key(key):
+                index = _move_enabled_index(filtered, safe_index, 1)
+            elif _is_enter_key(key):
+                if filtered[safe_index][0] in disabled_indexes:
+                    continue
+                return filtered[safe_index][0], current_filter
+            elif _is_escape_key(key):
+                return None, current_filter
+            elif key in {"/", "?"}:
+                _set_cursor(1)
+                in_filter_mode = True
+                filter_buf, cursor_pos = _start_filter_buffer(current_filter)
+            elif _is_backspace_key(key):
+                if filter_buf:
+                    filter_buf.pop()
+                elif current_filter:
+                    filter_buf = list(current_filter[:-1])
+                index = 0
+            else:
+                char = _coerce_printable_key(key)
+                if char is None:
+                    continue
+                _set_cursor(1)
+                in_filter_mode = True
+                filter_buf, cursor_pos = _start_filter_buffer(current_filter, char)
+                index = 0
+
+    return curses.wrapper(_run)
+
+
+def show_message(title: str, lines: list[str], help_lines: list[str] | None = None) -> None:
+    """显示提示信息并等待用户返回。"""
+    def _run(stdscr) -> None:
+        _enable_keypad(stdscr)
+        _set_cursor(0)
+        stdscr.timeout(100)
+        while True:
+            stdscr.clear()
+            height, width = stdscr.getmaxyx()
+            if _is_screen_too_small(height, width):
+                _render_screen_too_small(stdscr, title=title, height=height, width=width)
+                stdscr.refresh()
+                key = _read_key(stdscr)
+                if key == -1:
+                    continue
+                if _is_interrupt_key(key):
+                    raise KeyboardInterrupt
+                if _is_escape_key(key):
+                    return None
+                continue
+            help_text = help_lines or MESSAGE_HELP_LINES
+            content_width, left, top, _ = _layout_frame(height, width, help_text, len(lines), None, [])
+            divider_row = _render_framed_header(
+                stdscr,
+                title=title,
+                help_text=help_text,
+                width=width,
+                content_width=content_width,
+                top=top,
+                left=left,
+                height=height,
+            )
+            row = divider_row + 1
+            for line in lines:
+                if row >= height:
+                    break
+                attr = curses.A_BOLD if "限流" in line or "429" in line else 0
+                _draw_text(stdscr, row, left, line, width=content_width, attrs=attr)
+                row += 1
+            key = _read_key(stdscr)
+            if key == -1:
+                continue
+            if _is_interrupt_key(key):
+                raise KeyboardInterrupt
+            if _is_escape_key(key):
+                return None
+
+    curses.wrapper(_run)
+
+
+def _render_menu_items(stdscr, items: list[MenuItem], index: int, start_row: int, left: int, content_width: int, height: int, editing_index: int | None = None, edit_chars: list[str] | None = None, edit_cursor: int = 0) -> tuple[tuple[int, int], int]:
+    """渲染菜单主体内容。"""
+    row = start_row
+    cursor_pos = (row, left)
+    indent_prefix = "    "  # 4 个空格缩进
+    for item_index, item in enumerate(items):
+        if row >= height:
+            break
+        selected = item_index == index and item.focusable
+        is_editing = editing_index == item_index
+        title_indent = indent_prefix * item.indent
+        marker = {
+            "bool": "[*]" if item.value.strip() == "开启" else "[ ]",
+            "check": "[*]" if item.value.strip() == "开启" else "[ ]",
+            "readonly": "   ",
+            "submenu": "[>]",
+            "section": "   ",
+            "separator": "   ",
+            "action": "   ",
+        }.get(item.item_type, "   ")
+        if item.item_type == "separator":
+            _draw_text(stdscr, row, left, _line(content_width), width=content_width, attrs=curses.A_DIM)
+            row += 1
+            continue
+        if item.item_type == "section":
+            _draw_text(stdscr, row, left, title_indent + item.title, width=content_width, attrs=curses.A_BOLD)
+            row += 1
+            continue
+        prefix = ">" if selected else " "
+        value_text = item.value.strip()
+        attrs = curses.A_REVERSE if selected and not is_editing else 0
+        display_title = item.title
+        if item.input_style:
+            cursor_pos = _render_input_menu_item(
+                stdscr,
+                item=item,
+                row=row,
+                left=left,
+                content_width=content_width,
+                prefix=prefix,
+                marker=marker,
+                title_indent=title_indent,
+                value_text=value_text,
+                attrs=attrs,
+                is_editing=is_editing,
+                edit_chars=edit_chars,
+                edit_cursor=edit_cursor,
+            )
+            row += 1
+            continue
+        elif item.inline_choices:
+            cursor_pos = _render_inline_choice_menu_item(
+                stdscr,
+                item=item,
+                row=row,
+                left=left,
+                content_width=content_width,
+                prefix=prefix,
+                title_indent=title_indent,
+                attrs=attrs,
+                selected=selected,
+            )
+            row += 1
+            continue
+        elif item.item_type == "submenu":
+            dots = _dots(max(2, 18 - min(_display_width(display_title), 16)))
+            detail = value_text or ""
+            label = f"{prefix} {display_title} {dots} {detail} {SUBMENU_SUFFIX}" if detail else f"{prefix} {display_title} {dots} {SUBMENU_SUFFIX}"
+        else:
+            label = _build_basic_menu_label(
+                prefix=prefix,
+                marker=marker,
+                title_indent=title_indent,
+                display_title=display_title,
+                value_text=value_text,
+                item_type=item.item_type,
+            )
+        if item.item_type == "readonly":
+            _draw_text(stdscr, row, left, label, width=content_width, attrs=_readonly_attrs(item.title, value_text, attrs))
+            row += 1
+            continue
+        _render_plain_menu_item(stdscr, row=row, left=left, content_width=content_width, label=label, attrs=attrs)
+        row += 1
+    return cursor_pos, row
+
+
+def _render_input_menu_item(
+    stdscr,
+    *,
+    item: MenuItem,
+    row: int,
+    left: int,
+    content_width: int,
+    prefix: str,
+    marker: str,
+    title_indent: str,
+    value_text: str,
+    attrs: int,
+    is_editing: bool,
+    edit_chars: list[str] | None,
+    edit_cursor: int,
+) -> tuple[int, int]:
+    """渲染输入型菜单项，并返回光标位置。"""
+    dots = _dots(max(2, 18 - min(_display_width(item.title), 16)))
+    marker_str = marker.strip()
+    if marker_str:
+        base = f"{title_indent}{prefix} {marker} {item.title}"
+    else:
+        base = f"{title_indent}{prefix} {item.title}"
+    if is_editing and edit_chars is not None:
+        edit_text = "".join(edit_chars)
+        label_prefix = f"{base} {dots} "
+        _draw_text(stdscr, row, left, label_prefix, width=content_width, attrs=curses.A_REVERSE)
+        edit_start_x = left + _display_width(label_prefix)
+        edit_width = content_width - _display_width(label_prefix)
+        _draw_text(stdscr, row, edit_start_x, edit_text, width=edit_width, attrs=curses.A_UNDERLINE)
+        cursor_display_pos = _display_width("".join(edit_chars[:edit_cursor]))
+        return row, edit_start_x + min(cursor_display_pos, edit_width)
+    label = f"{base} {dots} {value_text}" if value_text else base
+    _draw_text(stdscr, row, left, label, width=content_width, attrs=attrs)
+    return row, left
+
+
+def _render_inline_choice_menu_item(
+    stdscr,
+    *,
+    item: MenuItem,
+    row: int,
+    left: int,
+    content_width: int,
+    prefix: str,
+    title_indent: str,
+    attrs: int,
+    selected: bool,
+) -> tuple[int, int]:
+    """渲染带行内选项的菜单项。"""
+    if item.title:
+        label = f"{title_indent}{prefix} {item.title}"
+    else:
+        label = f"{title_indent}{prefix}"
+    _draw_text(stdscr, row, left, "", width=content_width, attrs=attrs)
+    label_width = min(_display_width(label), content_width)
+    if label_width > 0:
+        _draw_text(stdscr, row, left, label, width=label_width, attrs=attrs)
+    start_x = left + label_width
+    cell_width = max((_display_width(f"[ ] {choice.label}") + 4 for choice in item.inline_choices), default=12)
+    for choice_index, choice in enumerate(item.inline_choices):
+        text = f"{'[*]' if choice.checked else '[ ]'} {choice.label}"
+        choice_attr = curses.A_REVERSE if selected and choice_index == item.inline_selected_index else 0
+        remaining = max(0, left + content_width - start_x)
+        if remaining <= 0:
+            break
+        draw_width = min(cell_width, remaining)
+        _draw_text(stdscr, row, start_x, text, width=draw_width, attrs=choice_attr)
+        start_x += cell_width + 2
+    return row, left
+
+
+def _build_basic_menu_label(*, prefix: str, marker: str, title_indent: str, display_title: str, value_text: str, item_type: str) -> str:
+    """构造普通菜单项标签。"""
+    marker_str = marker.strip()
+    if marker_str:
+        label = f"{title_indent}{prefix} {marker} {display_title}"
+    else:
+        label = f"{title_indent}{prefix} {display_title}"
+    if value_text and item_type not in {"check"}:
+        label = f"{label}: {value_text}"
+    return label
+
+
+def _render_plain_menu_item(stdscr, *, row: int, left: int, content_width: int, label: str, attrs: int) -> None:
+    """渲染普通单行菜单项。"""
+    _draw_text(stdscr, row, left, label, width=content_width, attrs=attrs)
+
+
+def _readonly_attrs(title: str, value_text: str, attrs: int) -> int:
+    """根据只读文案内容推断颜色样式。"""
+    if "限流" in value_text or "429" in value_text or "限流" in title:
+        return _status_attr(curses.COLOR_YELLOW, attrs)
+    if "失败" in value_text or "失败" in title:
+        return _status_attr(curses.COLOR_RED, attrs)
+    if "正常" in value_text or "已刷新" in value_text:
+        return _status_attr(curses.COLOR_GREEN, attrs)
+    return curses.A_DIM | attrs
+
+
+def _status_attr(color: int, attrs: int) -> int:
+    """构造带颜色的状态样式。"""
+    color_attrs = curses.A_BOLD | attrs
+    try:
+        has_colors = curses.has_colors()
+    except (AttributeError, curses.error):
+        has_colors = False
+    if has_colors:
+        try:
+            curses.start_color()
+            curses.use_default_colors()
+            pair_id = {
+                curses.COLOR_RED: 1,
+                curses.COLOR_YELLOW: 2,
+                curses.COLOR_GREEN: 3,
+                curses.COLOR_CYAN: 4,
+            }[color]
+            curses.init_pair(pair_id, color, -1)
+            color_attrs |= curses.color_pair(pair_id)
+        except (AttributeError, curses.error):
+            # 某些终端不支持动态初始化颜色对，退化为无色粗体展示即可。
+            pass
+    return color_attrs
+
+
+def _render_status_lines(stdscr, status_lines: list[str], content_end: int, left: int, content_width: int, height: int) -> None:
+    """渲染底部状态栏。"""
+    if not status_lines:
+        return
+    _height, width = stdscr.getmaxyx()
+    visible_lines = [_truncate(line, content_width) for line in status_lines if line]
+    if not visible_lines:
+        return
+    start_row = height - len(visible_lines)
+    divider_row = start_row - 1
+    if divider_row <= content_end or divider_row < 0:
+        return
+    _draw_text(stdscr, divider_row, left, _line(content_width), width=content_width, attrs=curses.A_DIM)
+    for offset, line in enumerate(visible_lines):
+        row = start_row + offset
+        if 0 <= row < height:
+            text, attrs = _status_line_display(line)
+            line_width = content_width
+            if row == height - 1:
+                size_text = f"当前窗口大小: {width}x{height}"
+                size_width = _display_width(size_text)
+                if size_width + 1 < content_width:
+                    line_width = content_width - size_width - 1
+                    size_x = left + content_width - size_width
+                    _draw_text(stdscr, row, size_x, size_text, width=size_width, attrs=curses.A_DIM)
+            _draw_text(stdscr, row, left, text, width=line_width, attrs=attrs)
+
+
+def _reserved_status_rows(status_lines: list[str]) -> int:
+    """计算状态栏预留行数。"""
+    visible_lines = [line for line in status_lines if line]
+    if not visible_lines:
+        return 0
+    return len(visible_lines) + 1
+
+
+def _status_line_display(line: str) -> tuple[str, int]:
+    """解析状态行颜色前缀并返回文本与样式。"""
+    attrs = curses.A_DIM
+    text = line
+    prefix_map = {
+        "[RED] ": curses.COLOR_RED,
+        "[YELLOW] ": curses.COLOR_YELLOW,
+        "[GREEN] ": curses.COLOR_GREEN,
+        "[BLUE] ": curses.COLOR_CYAN,
+    }
+    for prefix, color in prefix_map.items():
+        if line.startswith(prefix):
+            text = line[len(prefix):]
+            attrs = _status_attr(color, 0)
+            break
+    return text, attrs
 
 
 def _first_focusable_index(items: list[MenuItem], preferred: int = 0) -> int:
+    """返回首个可聚焦菜单项索引。"""
     if not items:
         return 0
     preferred = max(0, min(preferred, len(items) - 1))
@@ -110,6 +1274,8 @@ def _first_focusable_index(items: list[MenuItem], preferred: int = 0) -> int:
 def _move_focus(items: list[MenuItem], current: int, step: int) -> int:
     if not items:
         return 0
+    if step == 0:
+        return current
     candidate = current
     for _ in range(len(items)):
         candidate += step
@@ -120,56 +1286,46 @@ def _move_focus(items: list[MenuItem], current: int, step: int) -> int:
     return current
 
 
-def run_menu(
-    title: str,
-    items: list[MenuItem],
-    status: str = "",
-    *,
-    status_lines: list[str] | None = None,
-    help_lines: list[str] | None = None,
-    initial_index: int = 0,
-    transient_lines: list[str] | None = None,
-    refresh_state: MenuRefreshState | None = None,
-) -> str | None:
-    _ = (title, items, status, status_lines, help_lines, initial_index, transient_lines, refresh_state)
-    raise NotImplementedError("TODO: Windows menu.run_menu 待实现")
+def _display_width(text: str) -> int:
+    width = 0
+    for char in _normalize_terminal_text(text):
+        width += _char_display_width(char)
+    return width
 
 
-def prompt_text(label: str, initial: str = "", help_lines: list[str] | None = None) -> str | None:
-    _ = (label, initial, help_lines)
-    raise NotImplementedError("TODO: Windows menu.prompt_text 待实现")
+def _truncate(text: str, width: int) -> str:
+    text = _normalize_terminal_text(text)
+    if width <= 0:
+        return ""
+    if _display_width(text) <= width:
+        return text
+    if width <= 3:
+        result: list[str] = []
+        current_width = 0
+        for char in text:
+            char_width = _char_display_width(char)
+            if current_width + char_width > width:
+                break
+            result.append(char)
+            current_width += char_width
+        return "".join(result)
+    result: list[str] = []
+    current_width = 0
+    for char in text:
+        char_width = _char_display_width(char)
+        if current_width + char_width > width - 3:
+            break
+        result.append(char)
+        current_width += char_width
+    return "".join(result) + "..."
 
 
-def run_confirmation(
-    title: str,
-    lines: list[str],
-    help_lines: list[str] | None = None,
-    confirm_label: str = "确认导出",
-    cancel_label: str = "取消",
-) -> bool:
-    _ = (title, lines, help_lines, confirm_label, cancel_label)
-    raise NotImplementedError("TODO: Windows menu.run_confirmation 待实现")
-
-
-def run_select_list(
-    title: str,
-    lines: list[str],
-    *,
-    initial_index: int = 0,
-    help_lines: list[str] | None = None,
-    filter_text: str = "",
-    empty_message: str = "暂无可选项",
-    disabled_indexes: set[int] | None = None,
-) -> tuple[int | None, str]:
-    _ = (title, lines, initial_index, help_lines, filter_text, empty_message, disabled_indexes)
-    raise NotImplementedError("TODO: Windows menu.run_select_list 待实现")
-
-
-def show_message(title: str, lines: list[str], help_lines: list[str] | None = None) -> None:
-    _ = (title, lines, help_lines)
-    raise NotImplementedError("TODO: Windows menu.show_message 待实现")
-
-
-def run_waiting_message(title: str, lines: list[str], worker) -> object:
-    _ = (title, lines, worker)
-    raise NotImplementedError("TODO: Windows menu.run_waiting_message 待实现")
+def _pad_to_width(text: str, width: int) -> str:
+    """按显示宽度补空格，避免 Windows curses 刷新短文本时残留旧字符。"""
+    text = _normalize_terminal_text(text)
+    if width <= 0:
+        return ""
+    current_width = _display_width(text)
+    if current_width >= width:
+        return text
+    return text + (" " * (width - current_width))

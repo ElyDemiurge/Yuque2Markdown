@@ -79,7 +79,7 @@ def handle_connection_error(
 
     error_str = str(exc)
 
-    # 语雀限流需要给出等待建议，提示优先级高于通用连接错误。
+    # 语雀限流提示需要覆盖通用连接错误。
     if isinstance(exc, YuqueRateLimitError):
         retry_after = getattr(exc, "retry_after", None)
         wait_hint = f"建议等待 {int(retry_after)} 秒后再试" if retry_after else "建议稍后再试"
@@ -95,7 +95,7 @@ def handle_connection_error(
             log_func(f"刷新连接限流: {detail}")
         return ErrorResult(message=message, detail=detail)
 
-    # 代理开启时，优先区分“代理本身异常”和“代理可用但上游接口失败”。
+    # 代理开启时，区分“代理本身异常”和“代理可用但上游接口失败”。
     if proxy_enabled and proxy_host and proxy_test_func:
         proxy_ok, proxy_msg = proxy_test_func()
         if not proxy_ok:
@@ -160,7 +160,7 @@ def handle_export_doc_error(
         strict_mode: 严格模式；开启后，任意单文档失败都要求上层终止流程。
 
     返回:
-        ``True`` 表示调用方应立即终止后续导出；``False`` 表示可继续处理后续文档。
+        ``True`` 表示调用方应立即终止导出；``False`` 表示可继续处理剩余文档。
     """
     from core_modules.export.errors import ExportError, YuquePermissionError, YuqueRateLimitError
     from core_modules.export.models import DocExportState
@@ -176,7 +176,7 @@ def handle_export_doc_error(
         checkpoint.doc_states[doc_id].stage = "failed"
     save_checkpoint(repo_dir, checkpoint)
 
-    # 同步更新最终结果汇总和最近失败预览，供 UI 与日志直接复用。
+    # 同步更新最终结果汇总和最近失败预览，供 UI 与日志复用。
     result.failed_docs += 1
     result.failed_items.append(f"{doc_title}: {exc}")
 
