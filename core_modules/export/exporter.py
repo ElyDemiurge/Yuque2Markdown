@@ -46,8 +46,7 @@ def build_doc_markdown_result(
     """构建单篇文档最终 Markdown 结果。
 
     说明:
-        导出流程与“根据 .lake 重新生成 Markdown”共用同一套资源本地化逻辑，避免两处
-        处理结果不一致。
+        导出流程与"根据 .lake 重新生成 Markdown"复用同一套资源本地化逻辑。
     """
     if render_result is None:
         if doc_data is None:
@@ -428,7 +427,7 @@ class Exporter:
         # 启用离线资源时，先处理资源和链接，再写入最终 Markdown。
         final_result = render_result
         if options.offline_assets:
-            # 导出和 .lake 重新生成共用资源处理逻辑，避免两处结果不一致。
+            # 复用资源处理逻辑。
             self._emit_progress(
                 progress,
                 current_doc_title=node.title,
@@ -568,7 +567,7 @@ class Exporter:
             checkpoint.last_success_doc_id = doc_id
 
     def _ensure_doc_state(self, checkpoint: CheckpointState, doc_id: int | None) -> DocExportState:
-        """确保文档在断点状态中存在对应条目。"""
+        """在断点状态中创建文档条目。"""
         key = str(doc_id or "unknown")
         state = checkpoint.doc_states.get(key)
         if state is None:
@@ -632,7 +631,7 @@ class Exporter:
         """构建文档 slug 到路径的映射。
 
         说明:
-            仅遍历实际会参与导出的目录，避免为未导出文档生成无意义映射。
+            仅遍历实际参与导出的目录。
         """
         current_dir = current_dir or repo_dir
         used_names = used_names or {}

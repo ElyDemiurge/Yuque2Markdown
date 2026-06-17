@@ -47,7 +47,6 @@ def localize_markdown_assets(
             rewritten_links=rewritten,
         )
 
-    assets_dir.mkdir(parents=True, exist_ok=True)
     used_names: set[str] = set()
     localized_resources: list[ResourceRef] = []
 
@@ -206,10 +205,8 @@ def _resource_suffix_candidates(resource: ResourceRef) -> list[str]:
     return candidates
 
 
-
-
 def _is_valid_existing_asset(path: Path) -> bool:
-    """判断已存在本地资源是否可信，避免复用误下载的 HTML 页面。"""
+    """判断已存在本地资源是否可信。"""
     try:
         data = path.read_bytes()
     except OSError:

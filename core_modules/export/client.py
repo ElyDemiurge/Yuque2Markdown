@@ -324,7 +324,7 @@ class YuqueClient:
         raise YuqueNetworkError("资源下载重试失败")
 
     def _retry_transport_error(self, attempt: int) -> bool:
-        """对代理或连接层瞬时异常执行统一重试，并重新创建 opener，避免复用已失效的连接对象。"""
+        """对代理或连接层瞬时异常执行统一重试，并重新创建 opener。"""
         if attempt >= self.max_retries - 1:
             return False
         self._opener = self._build_opener()
@@ -332,6 +332,7 @@ class YuqueClient:
         return True
 
     def _debug(self, message: str) -> None:
+        """输出调试日志。"""
         if self._debug_logger is not None:
             self._debug_logger(message)
 
@@ -496,7 +497,7 @@ def _normalize_web_book(book: dict[str, Any]) -> dict[str, Any]:
 
 
 def _prepare_binary_url(url: str) -> str:
-    """为语雀附件 URL 补充下载参数，避免拿到预览页 HTML。"""
+    """为语雀附件 URL 补充下载参数。"""
     parsed = urllib.parse.urlparse(url)
     if "yuque.com" not in parsed.netloc.lower():
         return url
@@ -510,7 +511,7 @@ def _prepare_binary_url(url: str) -> str:
 
 
 def _looks_like_html_response(data: bytes, content_type: str | None) -> bool:
-    """检测错误下载到的 HTML 页面，避免将其当作附件写盘。"""
+    """检测错误下载到的 HTML 页面。"""
     content_type = (content_type or "").lower()
     if "text/html" in content_type:
         return True

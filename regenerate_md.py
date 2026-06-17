@@ -53,7 +53,7 @@ def _build_regenerate_client(config):
         return None
     defaults = config.export_defaults
     proxy = defaults.proxy
-    proxy_host = proxy.host or None if proxy.enabled else None
+    proxy_host = (proxy.host or None) if proxy.enabled else None
     return build_client(
         token,
         cookie=cookie,

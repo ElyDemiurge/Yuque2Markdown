@@ -1,6 +1,4 @@
 """导出设置控制器中的附件树测试。"""
-import sys
-sys.path.insert(0, ".")
 
 from core_modules.config.models import AppConfig, SessionState
 from core_modules.console.controllers.export_settings import ExportSettingsController

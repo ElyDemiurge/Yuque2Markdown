@@ -1,12 +1,2 @@
-# Yuque2Markdown
-# 本项目核心逻辑仅使用 Python 标准库；Windows 交互式控制台需要 curses 兼容包
-#
-# 运行要求：
-# - Python >= 3.10 (使用了类型联合语法 str | None)
-#
-# 如需运行测试，可安装 pytest：
-# pip install pytest
-#
-# Windows 运行交互式控制台需安装：
-# pip install windows-curses
+# 核心逻辑只用标准库；Windows 交互式控制台需要 curses 兼容包。
 windows-curses; platform_system == "Windows"

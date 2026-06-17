@@ -1,11 +1,8 @@
 """导出与根据 .lake 重新生成 Markdown 的共用流程测试。"""
 
-import sys
 import json
 from urllib.parse import quote
 from pathlib import Path
-
-sys.path.insert(0, ".")
 
 from core_modules.export.exporter import build_doc_markdown_result
 import regenerate_md

@@ -1,6 +1,4 @@
 """进度界面测试。"""
-import sys
-sys.path.insert(0, ".")
 
 from io import StringIO
 import pytest

@@ -1,6 +1,4 @@
 """导出日志测试。"""
-import sys
-sys.path.insert(0, ".")
 
 import tempfile
 from pathlib import Path

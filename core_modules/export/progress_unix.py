@@ -35,7 +35,7 @@ class ExportProgressUI(_BaseExportProgressUI):
                 snapshot = replace(snapshot, current_stage="已完成")
                 self.latest_snapshot = snapshot
             if self._finished and not completion_built and result["error"] is None and result["value"] is not None and on_complete is not None:
-                # 仅在导出真正完成后生成摘要，避免重复构造结果文案。
+                # 导出完成后生成摘要。
                 self.completion_lines = list(on_complete(result["value"]))
                 completion_built = True
             self._render_curses(stdscr, snapshot)

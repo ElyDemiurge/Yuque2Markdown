@@ -76,7 +76,7 @@ def load_yuque_cookie_from_browsers(
         safe_storage_loaded = False
         for cookie_db in _iter_cookie_databases(source.profile_root):
             checked += 1
-            # 同一个浏览器 profile 只取一次解密材料，避免重复访问钥匙串或 Local State。
+            # 同一个浏览器 profile 只取一次解密材料。
             if not safe_storage_loaded:
                 safe_storage_password = _get_safe_storage_password(source.safe_storage_service)
                 safe_storage_loaded = True
@@ -152,7 +152,7 @@ def _read_cookies(
     """从单个 Cookie 数据库中提取语雀相关 Cookie。"""
     with tempfile.TemporaryDirectory(prefix="yuque2markdown-cookies-", ignore_cleanup_errors=True) as tmp:
         copied_db = Path(tmp) / "Cookies"
-        # 复制到临时目录后读取，避免浏览器占用锁导致 sqlite 打不开。
+        # 复制到临时目录后读取。
         # Chromium 使用 WAL 时，最新 Cookie 可能还在 -wal 文件里，因此辅助文件也要一起复制。
         if not _copy_sqlite_database(cookie_db, copied_db):
             return [], 0
@@ -233,7 +233,7 @@ def _decrypt_macos_chromium_cookie(encrypted_value: bytes, *, host_key: str, pas
     """解密 macOS Chromium Cookie。
 
     Chrome/Edge/Brave 在 macOS 上通常使用 AES-128-CBC，key 由 Safe Storage
-    口令通过 PBKDF2-HMAC-SHA1 派生。这里复用系统 openssl，避免引入第三方依赖。
+    口令通过 PBKDF2-HMAC-SHA1 派生。这里复用系统 openssl。
     """
     if not password or not encrypted_value.startswith((b"v10", b"v11")):
         return ""

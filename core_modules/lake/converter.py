@@ -196,7 +196,7 @@ def _render_lake_block(element: ET.Element, *, warnings: list[str], list_indent:
         return f"{'#' * level} {text}" if text else ""
 
     if tag == "p":
-        # 整段加粗需要合并，避免输出断开的 `**...**` 序列。
+        # 整段加粗合并为单个 `**...**` 块。
         if _is_all_strong_wrapped(element):
             text = _extract_merged_strong_content(element, warnings=warnings).strip()
             return f"**{text}**" if text else ""
@@ -247,6 +247,11 @@ def _render_lake_block(element: ET.Element, *, warnings: list[str], list_indent:
     if tag == "u":
         text = _render_lake_inline(element, warnings=warnings, _wrap_tags=False).strip()
         return f"<u>{text}</u>" if text else ""
+
+    text = _render_lake_inline(element, warnings=warnings).strip()
+    if text:
+        warnings.append(f"Lake 转换未显式支持标签: {tag or 'unknown'}，已按纯文本导出")
+    return text
 
 
 def _render_lake_list(element: ET.Element, *, warnings: list[str], parent_indent: int = 0) -> str:
@@ -337,7 +342,7 @@ def _render_lake_inline(element: ET.Element, *, warnings: list[str], _wrap_tags:
     """
     tag = _lake_tag_name(element)
 
-    # <code> 内部只取纯文本和颜色，避免嵌套格式污染代码内容。
+    # <code> 内部仅提取纯文本和颜色。
     if tag == "code":
         code_color = _extract_color_style(element) or _extract_nested_color(element)
         code_text = _get_element_text(element).strip()
@@ -560,7 +565,7 @@ def _extract_color_style(element: ET.Element) -> str | None:
 def _is_all_strong_wrapped(element: ET.Element) -> bool:
     """检查段落是否全部由 <strong> 或 <code><strong> 序列组成。
 
-    这种情况需要合并为一个 Markdown 加粗块，避免输出断开的 `**...**` 序列。
+    这种情况合并为单个 Markdown 加粗块。
     """
     has_strong = False
     for child in element:
@@ -659,7 +664,7 @@ def _html_table_to_markdown(html: str, *, warnings: list[str]) -> str:
     html = re.sub(r'\s+data-lake-id="[^"]*"', '', html)
     html = re.sub(r'\s+id="[^"]*"', '', html)  # 移除所有 id 属性
 
-    # 处理 void 元素（col 等），确保自闭合
+    # 处理 void 元素（col 等）为自闭合标签
     void_elements = "|".join(["area", "base", "br", "col", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"])
     html = re.sub(rf"<({void_elements})\b([^>]*)(?<!/)>", r"<\1\2/>", html, flags=re.I)
 
@@ -821,7 +826,7 @@ def _normalize_board_text(value: object) -> str:
 
 
 def _render_missing_image_placeholder(payload: dict, alt: str) -> str:
-    """为无法恢复的图片卡保留可见占位，避免正文内容断掉。"""
+    """为无法恢复的图片卡保留可见占位。"""
     name = str(payload.get("name") or "").strip()
     original_type = str(payload.get("originalType") or "").strip().lower()
     error_message = str(payload.get("errorMessage") or "").strip()

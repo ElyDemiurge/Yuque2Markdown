@@ -1,10 +1,8 @@
-﻿# 语雀 Lake 格式解析
-
-## 说明
+# 语雀 Lake 格式解析
 
 Lake 是语雀编辑器内部使用的文档格式，存在 API 响应的 `body_lake` 字段里。本工具会解析 `body_lake`，再转成 Markdown。
 
-当前文档基于 `v0.4.3` 的实现整理，相关代码主要位于：
+适用版本：`v0.4.3`。相关代码主要位于：
 
 - `core_modules/lake/converter.py`
 - `core_modules/lake/resource_parser.py`
@@ -113,7 +111,7 @@ value 字符串
   → json.loads() 解析为字典
 ```
 
-解码失败时产生警告 `Lake card 解码失败: <type>`，卡片内容替换为空。
+解码失败时产生警告 `Lake card value 无法解码: <type>`，卡片内容替换为空。
 
 ### 已支持的 card 类型
 
@@ -242,13 +240,7 @@ print('hello')
 }
 ```
 
-输出：
-
-```markdown
-$$
-E = mc^2
-$$
-```
+输出：`$E = mc^2$`
 
 #### board
 
@@ -256,7 +248,7 @@ $$
 
 ### 未支持的 card 类型
 
-以下类型已识别但会产生警告 `Lake 转换未支持 card 类型: <type>`：
+以下类型会产生警告 `Lake 转换未支持 card 类型: <type>`：
 
 - `attachment`：附件（不同于 `file`）
 - `formula`：公式（当前仅 `math` card 有专门处理）
@@ -286,17 +278,14 @@ $$
 
 | 场景 | 警告内容 |
 |------|----------|
-| `body_lake` / `body` / `content` 都为空 | `文档正文为空` |
+| `body_lake` / `body` / `content` 都为空 | `接口未返回正文，请核对语雀原文以防文档丢失` |
 | `body_lake` 为空但有 `body` | `文档未返回 lake 正文，已回退到 body 字段（可能丢失部分格式）` |
 | `body_lake` 为空但有 `content` | `文档未返回 lake 正文，已回退到 content 字段（可能丢失部分格式）` |
 | XML 解析失败 | `lake 文档解析失败，请结合 .lake 文件检查` |
-| card 解码失败 | `Lake card 解码失败: <type>` |
 | card value 解码失败 | `Lake card value 无法解码: <type>` |
 | 未知 card 类型 | `Lake 转换未支持 card 类型: <type>` |
 | 残留标签检测 | `Lake 转换后仍残留原始标签，请结合 .lake 文件检查` |
-| 表格标签 | `Lake 转换遇到未处理的标签: <td/tr/tbody/table>` |
-| 通用未处理标签 | `Lake 转换遇到未处理的标签: <xxx>` |
-| 通用行内未处理标签 | `Lake 行内转换遇到未处理的标签: <xxx>` |
+| 通用未显式支持标签 | `Lake 转换未显式支持标签: <xxx>，已按纯文本导出` |
 | yuque card 缺链接 | `Lake yuque card 缺少链接` |
 | image card 缺 src | `Lake image card 缺少 src` |
 
@@ -312,7 +301,7 @@ $$
 
 ## 与 HTML 格式的关系
 
-API 响应中还存在 `body`（旧版 Markdown 格式）和 `body_html`（渲染后 HTML）。本工具仅使用 `body_lake` 作为转换来源。当 `body_lake` 完全为空时，工具会尝试回退使用 `body` 字段，并附带警告说明。
+API 响应中还可能存在 `body`（旧版 Markdown 格式）和 `content`。本工具优先使用 `body_lake` 作为转换来源。当 `body_lake` 完全为空时，工具会尝试依次回退使用 `body`、`content` 字段，并附带警告说明。
 
 如果 `body_lake` 存在，但转换后只剩空段落或占位节点，转换器会追加：
 

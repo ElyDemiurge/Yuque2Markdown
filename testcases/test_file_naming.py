@@ -1,6 +1,4 @@
 """文件命名工具测试。"""
-import sys
-sys.path.insert(0, ".")
 
 from pathlib import Path
 from core_modules.export.file_naming import sanitize_name, unique_name, safe_join

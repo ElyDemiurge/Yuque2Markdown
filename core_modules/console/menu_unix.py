@@ -45,6 +45,14 @@ MESSAGE_HELP_LINES = ["Esc 返回"]
 MIN_SCREEN_WIDTH = 160
 MIN_SCREEN_HEIGHT = 50
 
+BACKSPACE_KEYS = {getattr(curses, "KEY_BACKSPACE", 263), 8, 127, "\b", "\x7f"}
+DELETE_KEYS = {getattr(curses, "KEY_DC", 330), 330}
+LEFT_KEYS = {getattr(curses, "KEY_LEFT", 260), 260}
+RIGHT_KEYS = {getattr(curses, "KEY_RIGHT", 261), 261}
+UP_KEYS = {getattr(curses, "KEY_UP", 259), 259}
+DOWN_KEYS = {getattr(curses, "KEY_DOWN", 258), 258}
+INTERRUPT_KEYS = {3, "\x03"}
+
 
 @dataclass(slots=True)
 class MenuRefreshState:
@@ -131,9 +139,35 @@ def _draw_text(stdscr, row: int, col: int, text: str, *, width: int | None = Non
         return
 
 
+def _set_cursor(visibility: int) -> None:
+    """安全设置光标可见性。"""
+    try:
+        curses.curs_set(visibility)
+    except (AttributeError, curses.error):
+        return
+
+
+def _read_key(stdscr, *, wide: bool = False):
+    """读取按键；宽字符读取不可用或失败时返回 -1。"""
+    if wide and hasattr(stdscr, "get_wch"):
+        try:
+            return stdscr.get_wch()
+        except curses.error:
+            return -1
+    try:
+        return stdscr.getch()
+    except curses.error:
+        return -1
+
+
 def _char_display_width(char: str) -> int:
     """返回单个字符在终端中的显示宽度。"""
     return 2 if unicodedata.east_asian_width(char) in {"W", "F"} else 1
+
+
+def _normalize_terminal_text(text: str) -> str:
+    """Unix 终端保留原始符号；Windows 后端会做兼容替换。"""
+    return text
 
 
 def _coerce_printable_key(key) -> str | None:
@@ -178,18 +212,18 @@ def _apply_text_edit_key(key, chars: list[str], cursor_pos: int) -> tuple[list[s
     返回:
         ``(字符列表, 新光标位置, 是否已处理)``。
     """
-    if key in (curses.KEY_BACKSPACE, "\b", "\x7f"):
+    if _is_backspace_key(key):
         if cursor_pos > 0:
             del chars[cursor_pos - 1]
             cursor_pos -= 1
         return chars, cursor_pos, True
-    if key == curses.KEY_DC:
+    if _is_delete_key(key):
         if cursor_pos < len(chars):
             del chars[cursor_pos]
         return chars, cursor_pos, True
-    if key == curses.KEY_LEFT:
+    if _is_left_key(key):
         return chars, max(0, cursor_pos - 1), True
-    if key == curses.KEY_RIGHT:
+    if _is_right_key(key):
         return chars, min(len(chars), cursor_pos + 1), True
     char = _coerce_printable_key(key)
     if char is not None:
@@ -206,6 +240,35 @@ def _is_enter_key(key) -> bool:
 def _is_escape_key(key) -> bool:
     """统一判断 Esc 键。"""
     return key == 27 or key == "\x1b"
+
+
+def _is_backspace_key(key) -> bool:
+    return key in BACKSPACE_KEYS
+
+
+def _is_delete_key(key) -> bool:
+    return key in DELETE_KEYS
+
+
+def _is_left_key(key) -> bool:
+    return key in LEFT_KEYS
+
+
+def _is_right_key(key) -> bool:
+    return key in RIGHT_KEYS
+
+
+def _is_up_key(key) -> bool:
+    return key in UP_KEYS
+
+
+def _is_down_key(key) -> bool:
+    return key in DOWN_KEYS
+
+
+def _is_interrupt_key(key) -> bool:
+    """统一判断 Ctrl+C。"""
+    return key in INTERRUPT_KEYS
 
 
 _ESCDELAY_CONFIGURED = False
@@ -1247,3 +1310,14 @@ def _truncate(text: str, width: int) -> str:
         result.append(char)
         current_width += char_width
     return "".join(result) + "..."
+
+
+def _pad_to_width(text: str, width: int) -> str:
+    """按显示宽度补空格。"""
+    text = _normalize_terminal_text(text)
+    if width <= 0:
+        return ""
+    current_width = _display_width(text)
+    if current_width >= width:
+        return text
+    return text + (" " * (width - current_width))

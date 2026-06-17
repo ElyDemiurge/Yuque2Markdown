@@ -1,8 +1,7 @@
 """控制台菜单工具测试。"""
 import importlib
-import sys
-sys.path.insert(0, ".")
 
+from core_modules.console import menu_windows as windows_menu
 from core_modules.console.menu import (
     CONFIRM_HELP_LINES,
     DEFAULT_HELP_LINES,
@@ -235,7 +234,7 @@ def test_help_lines_use_esc_instead_of_q() -> None:
 
 
 def test_windows_help_lines_avoid_ambiguous_width_glyphs() -> None:
-    joined = "\n".join(DEFAULT_HELP_LINES + SELECT_HELP_LINES + CONFIRM_HELP_LINES)
+    joined = "\n".join(windows_menu.DEFAULT_HELP_LINES + windows_menu.SELECT_HELP_LINES + windows_menu.CONFIRM_HELP_LINES)
     assert not set("↑↓←→").intersection(joined)
 
 
@@ -246,11 +245,11 @@ def test_pad_to_width_accounts_for_wide_characters() -> None:
 
 
 def test_pad_to_width_normalizes_unstable_glyphs() -> None:
-    assert _pad_to_width("─›", 4) == "->  "
+    assert windows_menu._pad_to_width("─›", 4) == "->  "
 
 
 def test_windows_terminal_text_replaces_unstable_glyphs() -> None:
-    normalized = _normalize_terminal_text("↑↓ 移动 | ←→ 展开 | ── 连接 ── | 更多 › | 省略…")
+    normalized = windows_menu._normalize_terminal_text("↑↓ 移动 | ←→ 展开 | ── 连接 ── | 更多 › | 省略…")
 
     assert normalized == "Up/Down 移动 | Left/Right 展开 | -- 连接 -- | 更多 > | 省略..."
     assert not set("─·›↑↓←→…").intersection(normalized)
@@ -267,13 +266,12 @@ def test_draw_text_normalizes_and_pads_to_requested_width() -> None:
         def addstr(self, row: int, col: int, text: str, attrs: int) -> None:
             self.calls.append((row, col, text, attrs))
 
-    menu_backend = importlib.import_module(_normalize_terminal_text.__module__)
     screen = DummyScreen()
 
-    menu_backend._draw_text(screen, 1, 2, "↑↓ ── › …", width=20)
+    windows_menu._draw_text(screen, 1, 2, "↑↓ ── › …", width=20)
 
     assert screen.calls == [(1, 2, "Up/Down -- > ...    ", 0)]
-    assert menu_backend._display_width(screen.calls[0][2]) == 20
+    assert windows_menu._display_width(screen.calls[0][2]) == 20
 
 
 def test_inline_choice_render_keeps_browser_cookie_label_complete() -> None:

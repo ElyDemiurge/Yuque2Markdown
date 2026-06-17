@@ -108,7 +108,7 @@ python -m pytest
 
 改动跨模块时，直接跑全量测试。
 
-补充说明：
+范围限制：
 
 - 项目仅支持个人语雀知识库导出。
 - 支持 macOS 和 Windows 运行；Windows 需安装 `windows-curses`。
@@ -139,7 +139,7 @@ python -m pytest
 
 1. 先运行对应的转换测试。
 2. 再执行 `python regenerate_md.py`。
-3. 最后检查 `regenerate.log`、图片链接是否已改成本地路径、附件链接是否按预期保留原始地址，以及导出结果是否符合预期。
+3. 最后检查 `regenerate.log`、图片链接是否已改成本地路径、附件链接是否按配置保留或下载，以及导出结果是否符合预期。
 
 ## 相关文档
 

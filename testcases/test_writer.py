@@ -1,6 +1,4 @@
 """导出写文件工具测试。"""
-import sys
-sys.path.insert(0, ".")
 
 import json
 from pathlib import Path

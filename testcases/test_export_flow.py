@@ -1,6 +1,4 @@
 """导出流程测试。"""
-import sys
-sys.path.insert(0, ".")
 
 from pathlib import Path
 

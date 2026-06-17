@@ -91,7 +91,7 @@ def run_console_app() -> int:
             state = session.menu_refresh_state
             session.menu_refresh_state = None
             session.transient_lines = []
-            # 异步刷新结束后由主循环回填 session，避免后台线程直接改 UI 状态。
+            # 主循环回填 session 状态。
             if state is not None:
                 state.done = True
                 state.lines = []
@@ -303,7 +303,7 @@ def _build_client_from_config(
     """
     defaults = config.export_defaults
     proxy = defaults.proxy
-    proxy_host = proxy.host or None if proxy.enabled else None
+    proxy_host = (proxy.host or None) if proxy.enabled else None
     auth_mode = normalize_auth_mode(config.auth_mode)
     token = credential if auth_mode == AUTH_MODE_TOKEN else (config.token or "").strip()
     cookie = credential if auth_mode == AUTH_MODE_COOKIE else (config.cookie or "").strip()

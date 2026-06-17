@@ -1,6 +1,4 @@
 """配置校验测试。"""
-import sys
-sys.path.insert(0, ".")
 
 from core_modules.config.models import AppConfig, ExportDefaultsConfig, ProxyConfig
 from core_modules.config.validator import (

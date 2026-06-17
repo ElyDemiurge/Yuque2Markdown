@@ -1,6 +1,4 @@
 """资源处理测试。"""
-import sys
-sys.path.insert(0, ".")
 
 from io import StringIO
 from pathlib import Path
@@ -246,6 +244,7 @@ def test_localize_attachment_keeps_link_and_warns_when_selected_suffix():
             fetch_binary=fake_fetch,
             attachment_suffixes=[".pdf"],
         )
+        assert not assets_dir.exists()
 
     assert "https://www.yuque.com/attachments/yuque/0/2022/pdf/demo.pdf" in result.markdown
     assert result.resources[0].local_path is None

@@ -1,4 +1,4 @@
-﻿# Yuque2Markdown
+# Yuque2Markdown
 
 通过语雀 API Token 或浏览器 Cookie 将个人语雀知识库导出为本地 Markdown 的交互式命令行工具。
 
@@ -6,8 +6,7 @@
 
 ## 作者
 
-- Cyberangel：项目作者
-- OpenAI Codex、Claude Code：协助代码实现、整理和测试补强
+- Cyberangel
 
 ## 功能特性
 
@@ -28,12 +27,12 @@
 
 - 使用 Token 登录：不下载语雀附件，附件链接会保留在 Markdown 中。
 - 使用浏览器 Cookie 登录：开放附件下载设置，可选择全部附件或指定扩展名。
-- 图片资源不受此限制，仍会按“离线资源”设置下载到本地。
+- 图片资源按“离线资源”设置下载到本地。
 
 导出日志中可能会看到：
 
 ```text
-发现 N 个语雀附件链接，Token 登录无法下载附件，已保留原始链接；如需下载附件，请改用 Cookie 登录
+发现 N 个语雀附件链接，使用 Token 登录时无法下载附件以及选择下载附件类型，已保留原始链接；如需下载附件，请切换到浏览器 Cookie 登录
 ```
 
 这表示使用的是 Token 登录，属于预期行为。
@@ -72,7 +71,7 @@ py -3 yuque2markdown.py
 
 程序启动后会进入交互式控制台，按提示选择登录方式、知识库和导出设置。
 
-控制台交互补充：
+控制台交互：
 
 - 从列表选择知识库时，可直接输入过滤词，也可按 `/` 主动进入过滤模式。
 - 知识库过滤支持中英文混合输入，输入后可用 `←` / `→` 在过滤词中移动光标。
@@ -134,7 +133,7 @@ Cookie 登录可用于下载语雀附件。Cookie 属于敏感凭据，请不要
 - 导出的 Markdown 文件
 - 对应的 `.yuque.json` 原始数据
 - 对应的 `.lake` 原始 Lake 内容
-- `assets/` 资源目录（主要保存已下载到本地的图片）
+- `assets/` 资源目录（保存已下载到本地的图片和附件）
 - 导出日志（如 `export.log`）
 - 重新生成 Markdown 的日志（如 `regenerate.log`）
 - 断点文件（用于中断恢复）
@@ -148,8 +147,6 @@ python -m pytest testcases/
 python -m pytest testcases/test_markdown_converter.py
 python regenerate_md.py
 ```
-
-测试、维护脚本和排障入口见下面的文档导航。
 
 ## 文档导航
 

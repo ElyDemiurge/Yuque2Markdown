@@ -1,11 +1,42 @@
+# Python 编译文件
 __pycache__/
 *.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+
+# 测试和覆盖率
 .pytest_cache/
 .mypy_cache/
+.coverage
+htmlcov/
+.tox/
 
+# 虚拟环境
+.venv/
+venv/
+ENV/
+env/
+
+# IDE 和编辑器
 .DS_Store
 .idea/
+.vscode/
+*.swp
+*.swo
+*~
 
+# 项目特定文件
 output/
 yuque2markdown.config.json
 yuque2markdown.console.log
+*.log
+
+# 临时文件
+*.tmp
+*.bak
+.temp/

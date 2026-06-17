@@ -50,20 +50,20 @@ def test_troubleshooting_documents_filter_debugging_steps() -> None:
 
 def test_config_doc_mentions_current_version_and_attachment_suffix_controls() -> None:
     config_doc = _read_text("docs/配置文件说明.md")
-    assert f"当前文档基于 `{APP_VERSION}` 的控制台实现整理。" in config_doc
+    assert f"适用版本：`{APP_VERSION}`。" in config_doc
     assert "控制台中支持按分组切换、逐项切换，以及手动输入其他扩展名。" in config_doc
 
 
 def test_api_doc_distinguishes_current_project_usage_from_reference_capabilities() -> None:
     api_doc = _read_text("docs/语雀官方接口说明.md")
-    assert "### 当前代码实际接入的接口" in api_doc
-    assert "#### Cookie / 网页端模式" in api_doc
-    assert "## 18. 与当前项目实现的差异" in api_doc
+    assert "## 2. 当前代码实际接入的接口" in api_doc
+    assert "### Cookie / 网页端模式" in api_doc
+    assert "## 8. 与当前项目实现的差异" in api_doc
 
 
 def test_lake_doc_mentions_current_supported_cards_and_fallbacks() -> None:
     lake_doc = _read_text("docs/语雀lake格式解析.md")
-    assert f"当前文档基于 `{APP_VERSION}` 的实现整理" in lake_doc
+    assert f"适用版本：`{APP_VERSION}`。" in lake_doc
     assert "#### mention" in lake_doc
     assert "#### table" in lake_doc
     assert "正文仅含空段落或占位节点，请核对语雀原文以防文档丢失" in lake_doc

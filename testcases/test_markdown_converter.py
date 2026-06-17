@@ -1,8 +1,6 @@
 """Lake 转 Markdown 测试。"""
 import json
-import sys
 import zlib
-sys.path.insert(0, ".")
 
 from core_modules.lake.resource_parser import collect_resources, extract_yuque_doc_slug, is_attachment_url, is_image_url, is_yuque_doc_url
 from core_modules.lake.converter import convert_doc_to_markdown, render_doc_markdown

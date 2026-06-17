@@ -1,6 +1,4 @@
 """断点文件测试。"""
-import sys
-sys.path.insert(0, ".")
 
 from pathlib import Path
 from core_modules.export.checkpoint import checkpoint_path, create_checkpoint, load_checkpoint, save_checkpoint

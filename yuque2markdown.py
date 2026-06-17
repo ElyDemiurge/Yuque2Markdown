@@ -55,7 +55,6 @@ def run_startup_checks() -> tuple[bool, list[str]]:
     """运行启动检查，返回 (是否通过, 错误消息列表)。"""
     errors = []
 
-    # 启动阶段先拦截基础环境问题，避免进入控制台后才暴露异常。
     version_ok, version_error = check_python_version()
     if not version_ok:
         errors.append(version_error)
@@ -99,7 +98,6 @@ def configure_console_environment() -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    # 入口只负责启动前校验和控制台初始化。
     configure_console_environment()
 
     checks_ok, errors = run_startup_checks()

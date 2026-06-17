@@ -69,7 +69,7 @@ def load_config(base_dir: Path | None = None) -> AppConfig:
         ui_preferences=UiPreferences(**ui_preferences),
     )
 
-    # 配置读入后先做一次校验，便于尽早发现旧字段或非法值。
+    # 配置读入后先做一次校验。
     errors = validate_config(config)
     if errors:
         error_lines = format_validation_errors(errors)

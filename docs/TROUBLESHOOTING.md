@@ -1,4 +1,4 @@
-﻿# 排障说明
+# 排障说明
 
 ## 适用范围
 
@@ -52,7 +52,7 @@
 4. 在控制台中重新执行连接测试或刷新连接状态。
 5. 如果同时配置了代理，确认代理是否真的可用。
 
-补充说明：
+范围限制：
 
 - 项目仅支持个人语雀知识库导出。
 - 支持 macOS 和 Windows 运行；Windows 需安装 `windows-curses`。
@@ -188,14 +188,14 @@ python -m pytest testcases/test_console_menu.py testcases/test_repo_handler.py t
 `export.log` 中会出现类似警告：
 
 ```text
-Lake 转换遇到未处理的标签: <tag>
+Lake 转换未显式支持标签: <tag>，已按纯文本导出
 HTML 表格解析失败
-未支持 card 类型: xxx
+Lake 转换未支持 card 类型: xxx
 ```
 
-### 说明
+### 处理逻辑
 
-- `未处理的标签`
+- `未显式支持标签`
   通常表示原始 Lake 中出现了转换器尚未支持的 HTML/Lake 标签。
 - `HTML 表格解析失败`
   通常与表格 card 中的 HTML 结构、void 元素、自定义属性或转义内容有关。
@@ -263,7 +263,7 @@ _export_checkpoint.json
 
 - 你已经导出了 `.lake` 和 `.yuque.json`
 - 只是 Lake 转 Markdown 逻辑修复了
-- 不想重新请求语雀 API 和重新下载全部资源
+- 不想重新请求语雀文档接口和重新下载全部资源
 
 执行方式：
 
@@ -275,7 +275,7 @@ python regenerate_md.py
 
 - 遍历 `output/` 下的 `.lake` 文件
 - 找到同目录下对应的 `.yuque.json`
-- 调用 `render_doc_markdown()` 重新生成 Markdown
+- 调用 `build_doc_markdown_result()` 重新生成 Markdown
 - 覆盖写回对应 `.md`
 - 将过程记录到 `regenerate.log`
 

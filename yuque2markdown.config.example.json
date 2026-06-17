@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "auth_mode": "token",
+  "token": "",
+  "cookie": "",
+  "persist_token": true,
+  "persist_cookie": true,
+  "last_repo_input": "",
+  "export_defaults": {
+    "output_dir": "output",
+    "resume": true,
+    "strict": false,
+    "request_interval": 0.1,
+    "timeout": 10,
+    "token_check_timeout": 5,
+    "request_max_retries": 5,
+    "rate_limit_backoff_seconds": 5.0,
+    "network_backoff_seconds": 2.0,
+    "max_backoff_seconds": 60.0,
+    "max_docs": null,
+    "offline_assets": true,
+    "assets_dir_name": "assets",
+    "fail_on_asset_error": false,
+    "attachment_suffixes": ["*"],
+    "proxy": {
+      "enabled": false,
+      "host": "127.0.0.1",
+      "port": 7890,
+      "test_url": "https://www.baidu.com"
+    }
+  },
+  "ui_preferences": {
+    "confirm_before_export": true,
+    "auto_save_after_export": true
+  }
+}
